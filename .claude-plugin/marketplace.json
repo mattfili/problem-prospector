@@ -1,0 +1,28 @@
+{
+  "name": "problem-prospector",
+  "owner": {
+    "name": "Matt Fili",
+    "url": "https://github.com/mattfili"
+  },
+  "metadata": {
+    "description": "Single-plugin marketplace for problem-prospector.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "problem-prospector",
+      "source": "./",
+      "description": "Evidence-first discovery of business-shaped problems, wedged into MVP proposals. No API keys anywhere in the research path.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Matt Fili"
+      },
+      "license": "MIT",
+      "keywords": [
+        "market-research",
+        "idea-validation",
+        "opportunity-discovery"
+      ]
+    }
+  ]
+}

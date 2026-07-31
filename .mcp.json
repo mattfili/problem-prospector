@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "dialog": {
+      "type": "http",
+      "url": "https://reddit-research-mcp.fastmcp.app/mcp"
+    },
+    "trend-pulse": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "trend-pulse[mcp]",
+        "--with",
+        "mcp<2",
+        "trend-pulse-server"
+      ]
+    },
+    "idea-reality": {
+      "command": "uvx",
+      "args": ["idea-reality-mcp"]
+    }
+  }
+}

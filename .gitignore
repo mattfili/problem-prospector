@@ -1,0 +1,27 @@
+# Working area for upstream clones. Nothing here is shipped; skills/marketing/
+# is the vendored copy that ships, refreshed via scripts/sync-marketingskills.sh.
+vendor/
+
+# Per-run state. Local research output, not source.
+runs/
+
+# The generated marketing context (derived from a run, not authored).
+.agents/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Model / crawl caches (fastembed downloads bge-small-en-v1.5 on first use)
+.cache/
+.fastembed_cache/
+.crawl4ai/
+
+# OS
+.DS_Store
+
+# Tooling caches
+.ruff_cache/

@@ -1,0 +1,21 @@
+{
+  "name": "problem-prospector",
+  "version": "0.1.0",
+  "description": "Evidence-first discovery of business-shaped problems: capture signal from key-free public sources, cluster it, separate intensity from frequency, stress-test willingness-to-pay against mandatory counter-evidence, then wedge survivors into MVP shapes with transparent subscores.",
+  "author": {
+    "name": "Matt Fili"
+  },
+  "homepage": "https://github.com/mattfili/problem-prospector",
+  "license": "MIT",
+  "keywords": [
+    "market-research",
+    "idea-validation",
+    "opportunity-discovery",
+    "competitive-analysis",
+    "no-api-keys"
+  ],
+  "commands": "./commands",
+  "agents": "./agents",
+  "skills": "./skills",
+  "mcpServers": "./.mcp.json"
+}

@@ -178,6 +178,23 @@ if python3 tests/validate_enums.py; then ok "no CONTRACTS enum drift"
 else bad "no CONTRACTS enum drift" "see output above"; fi
 
 # ---------------------------------------------------------------------------
+section "dropped-query fallback regression"
+# ---------------------------------------------------------------------------
+# Stubs the HTTP layer to force an Arctic Shift outage, because a live one
+# cannot be reproduced on demand. Guards the fabricated-provenance bug found
+# during acceptance testing.
+if [ -f tests/test_query_fallback.py ]; then
+  if out="$(uv run --quiet tests/test_query_fallback.py 2>&1)"; then
+    ok "reddit_search.py refuses to substitute an unfiltered listing"
+  else
+    bad "reddit_search.py refuses to substitute an unfiltered listing" \
+        "$(echo "$out" | grep FAIL | head -3 | tr '\n' ' ')"
+  fi
+else
+  skip "dropped-query fallback regression"
+fi
+
+# ---------------------------------------------------------------------------
 section "credential audit (static)"
 # ---------------------------------------------------------------------------
 # A read of any credential-shaped env var is a hard failure. Comments are

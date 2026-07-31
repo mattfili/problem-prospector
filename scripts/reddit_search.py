@@ -837,6 +837,15 @@ exit codes:
     parser.add_argument("--after", default=None, metavar="WHEN", help="ISO date or unix seconds: only posts newer than this")
     parser.add_argument("--before", default=None, metavar="WHEN", help="ISO date or unix seconds: only posts older than this")
     parser.add_argument("--min-score", type=int, default=None, metavar="N", help="drop posts scoring below N (caller's lever; off by default)")
+    parser.add_argument(
+        "--allow-unfiltered-fallback",
+        action="store_true",
+        help="when --query cannot be applied (pullpush fallback has no "
+             "equivalent full-text match), keep the unfiltered listing instead "
+             "of returning nothing. Off by default: an unfiltered listing "
+             "answers a different question than the one asked, and downstream "
+             "clustering cannot tell the two apart.",
+    )
     parser.add_argument("--comments", action="store_true", help="also capture top comments for each captured post")
     parser.add_argument("--comments-per-post", type=int, default=10, metavar="N", help="top comments kept per post (default 10)")
     parser.add_argument(
@@ -968,6 +977,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         report.fetched = len(items)
         log(f"r/{subreddit}: fetched {len(items)} posts via {report.backend} [{report.status}]")
 
+        # CONTRACTS §2 defines `query` as "the exact query string that surfaced
+        # this item". When the pullpush fallback drops the query and returns a
+        # plain listing, the query surfaced nothing — stamping it anyway would
+        # be a fabricated provenance claim, and unlike the mode change in the
+        # summary it would travel *with the data* into clustering and onto the
+        # cards. Null is the honest value; the dropped query stays visible in
+        # report.mode for anyone reading the summary.
+        effective_query = None if "query dropped" in report.mode else args.query
+
+        # A dropped query is not a degraded answer to the question asked — it is
+        # an answer to a different question. Returning r/smallbusiness's latest
+        # 40 posts to a caller who asked about permits manufactures signal: the
+        # items are real, but they are not evidence of the pain the matrix cell
+        # is about, and clustering cannot tell the difference. So by default we
+        # return nothing for this subreddit and say why. `source_health` marks
+        # it unavailable, which downstream reads as "we could not look" rather
+        # than "nobody is complaining" — the distinction the whole tool rests on.
+        if args.query and effective_query is None and not args.allow_unfiltered_fallback:
+            log(
+                f"r/{subreddit}: dropping {len(items)} unfiltered items "
+                f"(query {args.query!r} could not be applied); "
+                f"pass --allow-unfiltered-fallback to keep them"
+            )
+            report.mode = f"dropped (query {args.query!r} unsupported by fallback)"
+            report.status = "unavailable"
+            report.detail = (
+                f"{report.detail}; refused to substitute an unfiltered listing "
+                f"for the query {args.query!r}"
+            )
+            items = []
+
         for item in items:
             score = item.get("score")
             created = item.get("created_utc")
@@ -1000,7 +1040,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             record = post_to_evidence(
                 item,
                 cell_id=args.cell_id,
-                query=args.query,
+                query=effective_query,
                 captured_utc=captured_utc,
                 max_text_chars=args.max_text_chars,
             )

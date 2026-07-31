@@ -442,7 +442,8 @@ before assuming a source works.
 | `idea-reality` (uvx) | **works, key-free** | server `idea-reality-mcp 3.4.5`, 1 tool: `idea_check` |
 | `trend-pulse` (uvx) | **works, key-free — requires a pin** | its `[mcp]` extra does not constrain `mcp`, and `mcp 2.0.0` removed `mcp.server.fastmcp`, so the server crashes on import. `.mcp.json` pins `--with "mcp<2"`, which yields `trend-pulse 1.29.0` and 29 tools. If it ever breaks again, this is the first thing to check. |
 | `dialog` (hosted HTTP) | **requires OAuth** | returns `401 invalid_token` unauthenticated. Opportunistic primary only; `scripts/reddit_search.py` is the guaranteed path. Its tool names were never observed (the 401 precedes the tool list), so **no agent's `tools:` frontmatter grants a `mcp__dialog__*` tool** — granting a guessed name is worse than not granting one. Consequence to expect, and to not mistake for a bug: the `dialog` probe resolves `unavailable` in every agent, every run, and the run proceeds on Arctic Shift. If the tool names are ever confirmed, add them to `scout` / `skeptic` / `economist` frontmatter; until then the guaranteed path is the only path. |
-| Arctic Shift | works, key-free | `>=1.2s`/req; 422 ⇒ retry at `limit=50`; no global subreddit search |
+| Arctic Shift | works, key-free | `>=1.2s`/req; 422 ⇒ retry at `limit=50`; no global subreddit search. See the two query caveats below. |
+| pullpush (last resort) | works, key-free | `>=4s`/req, stop on first 429. **Has no equivalent of Arctic Shift's `query`** — see below. |
 | HN Algolia | works, key-free | `nbHits` gives bucket counts without paginating. `numericFilters` MUST be URL-encoded. `tags` is AND-combined — the OR form is the parenthesised `tags=(story,comment)`. |
 | GitHub search | works, key-free | 10 req/min unauthenticated; pace ~6.5s/req |
 | Google Trends (`trendspyg`) | works, key-free | values are **relative 0–100**, not absolute volume |
@@ -451,3 +452,44 @@ before assuming a source works.
 **macOS note for anyone writing tests here:** `timeout(1)` does not exist on
 stock macOS. Use a language-level timeout instead — a shell probe wrapped in
 `timeout` silently becomes a no-op and looks like a dead server.
+
+### Arctic Shift query semantics — two caveats that bite
+
+Both found by live testing during the build, both affect keyphrase choice.
+
+**1. `query` requires a scope.** An unscoped full-text query is rejected:
+`HTTP 400: "'query' query parameter requires one of: author, subreddit"`.
+There is no global Reddit search. Always pass `--subreddits`, sourced from
+`inputs.json` `matrix[].subreddits`.
+
+**2. `query` is stem-matching, not phrase-matching.** Searching `permit` in
+r/sysadmin returns posts about firewall ACLs — `permit`/`permitted` in a
+networking sense — not building permits. Verified: 10/10 results matched the
+stem, 0/10 were about the intended topic. The same word means different things
+in different communities, so a keyphrase that works in one subreddit can be
+pure noise in another.
+
+The practical rule for whoever picks keyphrases (scouts, and the historian in
+`skills/retro-trends`): **prefer multi-word phrases that are unambiguous in the
+target community**, and sanity-check a sample of returned titles before
+treating a cell's capture as on-topic. A high hit count against an ambiguous
+stem is the easiest way to manufacture a confident, wrong cluster.
+
+### The dropped-query rule
+
+When Arctic Shift is unavailable and `reddit_search.py` falls back to pullpush,
+the `query` cannot be applied. By default the script **returns nothing for that
+subreddit** and records `status: "unavailable"` — it does not substitute an
+unfiltered listing.
+
+This is deliberate, and it is the failure-as-absence rule pointed the other
+way. An unfiltered listing is not a degraded answer to the question asked; it
+is a complete answer to a different question. Forty recent r/smallbusiness
+posts returned to a caller researching permits are real posts that are not
+evidence of anything the run is about, and clustering cannot tell the
+difference. Returning them manufactures signal.
+
+`--allow-unfiltered-fallback` opts in to keeping them. Even then, each item is
+stamped `query: null` rather than the requested string, because §2 defines
+`query` as *the exact string that surfaced this item*. Regression-tested in
+`tests/test_query_fallback.py`.

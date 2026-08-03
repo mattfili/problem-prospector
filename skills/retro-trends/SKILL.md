@@ -1,6 +1,6 @@
 ---
 name: retro-trends
-description: "Reconstructs the backward-facing 3-5 year history of a pain cluster from four key-free scripts (HN Algolia, Reddit via Arctic Shift, Google Trends, GitHub repo creation) and fills only `retro_trend` in `cards/<cluster_id>.json`. Triggers when a run must answer 'has this been broken for years or did it just show up?', decide whether a hot cluster is only a news spike, check whether solutions are accumulating against a pain (repo-creation curves), or recompute slopes for `/rescan`; also on phrases like 'is this trending or persistent', 'how long has this been a problem', 'five-year history', 'is anyone building here', 'was this always broken'. Does NOT cover forward-looking forecasts, current-momentum lookups (that is the `trend-pulse` MCP or `scripts/trends_cli.py`), competitor counts (that is `saturation` from the `idea-reality` MCP or `scripts/reality_cli.py`), or ranking scores — it emits per-source series and one named shape, never a blended number."
+description: "Reconstructs the backward-facing 3-5 year history of a pain cluster from five key-free scripts (HN Algolia, Reddit via Arctic Shift, Google Trends, GitHub repo creation, npm package creation) and fills only `retro_trend` in `cards/<cluster_id>.json`. Triggers when a run must answer 'has this been broken for years or did it just show up?', decide whether a hot cluster is only a news spike, check whether solutions are accumulating against a pain (repo-creation and package-creation curves), or recompute slopes for `/rescan`; also on phrases like 'is this trending or persistent', 'how long has this been a problem', 'five-year history', 'is anyone building here', 'was this always broken'. Does NOT cover forward-looking forecasts, current-momentum lookups (that is the `trend-pulse` MCP or `scripts/trends_cli.py`), competitor counts (that is `saturation` from the `idea-reality` MCP or `scripts/reality_cli.py`), or ranking scores — it emits per-source series and one named shape, never a blended number."
 ---
 
 # Retro trends: reconstruct 3-5 years of history per cluster, key-free
@@ -22,6 +22,14 @@ half-year since 2021, and nobody has shipped a repo against it. That is the mone
 > signal.** Flat complaints mean durable demand. Flat repos mean nobody has taken it.
 > Both curves are required — either one alone is noise.
 
+The solution curve has two sources, not one, because GitHub is a single point of
+failure: unauthenticated `api.github.com/search` 403s from most cloud/CI IPs, so a
+run hosted anywhere but a residential connection can lose the read the whole plugin
+is built around. `scripts/npm_history.py` is a second, independent solution-side
+signal (package creation instead of repo creation) so the two-curve read survives a
+GitHub outage instead of going dark. Report both when both answer; fall back to
+whichever answered when the other is `unavailable`.
+
 Today's snapshot cannot distinguish these cases. Frequency and intensity are measured on
 a pile of posts with no time axis. This gap adds the time axis, and it is the only gap
 in the pipeline where **every source is a plain script** — no MCP, no key, no OAuth — so
@@ -33,11 +41,12 @@ keyphrases you choose must be recorded (see *Reproducibility for /rescan*).
 
 ## Decisions already taken — do not re-litigate
 
-1. **Four sources, all key-free scripts.** HN Algolia, Reddit via Arctic Shift, Google
-   Trends via trendspyg, GitHub unauthenticated search. Do not reach for an API that
-   needs a token; do not propose one; do not read `GITHUB_TOKEN` or `GH_TOKEN`
-   (`gh_history.py` sees both and ignores them on purpose, and says so on stderr, so every
-   user gets the same series).
+1. **Five sources, all key-free scripts.** HN Algolia, Reddit via Arctic Shift, Google
+   Trends via trendspyg, GitHub unauthenticated search, npm registry search. Do not reach
+   for an API that needs a token; do not propose one; do not read `GITHUB_TOKEN` or
+   `GH_TOKEN` (`gh_history.py` sees both and ignores them on purpose, and says so on
+   stderr, so every user gets the same series). GitHub and npm are both solution-side —
+   see §5 below for why there are two.
 2. **Window is 3-5 years.** Default 5. Shorter only when the space did not exist 5 years
    ago, and then say so in `note`.
 3. **Per-source series stay separate.** There is no cross-source average, no composite
@@ -58,7 +67,8 @@ keyphrases you choose must be recorded (see *Reproducibility for /rescan*).
 1. Read `clusters.json` (CONTRACTS §3). For each target cluster take `canonical`,
    `member_count`, and pull 3-5 `exemplar_urls` / member texts for phrasing.
 2. Derive keyphrases — **pain-side and solution-side sets are different** (next section).
-3. Run the four scripts. GitHub last or in the background; it is the slow one.
+3. Run the five scripts. GitHub last or in the background; it is the slow one. npm is
+   comparably fast to HN/Reddit and does not need the same scheduling care.
 4. Classify each series independently. Then assemble one cluster-level shape + slope.
 5. Write `cards/<cluster_id>.json` → `retro_trend` only. Append source health.
 6. Render the ASCII block for `opportunity-cards.md`.
@@ -70,19 +80,22 @@ uv run scripts/hn_history.py --help
 uv run scripts/reddit_history.py --help
 uv run scripts/gtrends_history.py --help
 uv run scripts/gh_history.py --help
+uv run scripts/npm_history.py --help
 ```
 
 Every script is standalone and key-free, run as `uv run scripts/<name>.py`, JSON on
 stdout, diagnostics on stderr (CONTRACTS cross-cutting rules 3 and 4). **The keyphrase
 flag is not uniform:** `hn_history.py`, `gtrends_history.py` and `reddit_history.py` take
-`--query` (repeatable); **only `gh_history.py` takes `--terms`**; and `gtrends_history.py`
-takes `--window 5y|12m|all` instead of `--years`. `reddit_history.py` additionally
-requires `--subreddits` in practice — Arctic Shift rejects an unscoped full-text query
-with HTTP 400, and there is no global Reddit search. **If a flag name differs, `--help` is
-authoritative, not this document.** Do not guess a flag twice; read the help.
+`--query` (repeatable); **`gh_history.py` and `npm_history.py` both take `--terms`**
+instead (same flag name, different scripts — they are the two solution-side sources); and
+`gtrends_history.py` takes `--window 5y|12m|all` instead of `--years`. `reddit_history.py`
+additionally requires `--subreddits` in practice — Arctic Shift rejects an unscoped
+full-text query with HTTP 400, and there is no global Reddit search. **If a flag name
+differs, `--help` is authoritative, not this document.** Do not guess a flag twice; read
+the help.
 
 Why this paragraph is load-bearing rather than pedantic: a wrong flag name exits non-zero
-with no series, and the four failure paths in this gap all degrade *toward*
+with no series, and the five failure paths in this gap all degrade *toward*
 `persistent-flat` — the read you were hoping for. A mistyped flag therefore hands you the
 underserved signal for free and wrong. Treat any empty series as a measurement failure
 until you have re-read the help.
@@ -127,12 +140,15 @@ Cluster canonical: *"permit status is invisible to staff and applicants alike."*
 | HN / Reddit | `"Accela"` (named incumbent) | `"software"` | Measures the industry, not the pain |
 | Google Trends (public interest) | `"permit status"`, `"building permit"` | `"permit workflow opacity"` | Below Google's reporting threshold → flat zero |
 | GitHub (solution side) | `"permit software"`, `"permitting"`, `"code enforcement"` | `"permit status is invisible"` | 0 repos → you conclude nobody is building, which is the exact wrong conclusion |
+| npm (solution side) | `"permit software"`, `"permitting"` — reuse the GitHub set verbatim | `"permit status is invisible"` | Same failure as GitHub, for the same reason; it is the same axis measured a second way |
 
-**The GitHub set must be broader than the pain set.** Repos accumulate at the level of
-the *space noun*, not the pain phrasing. Searching GitHub for the pain sentence returns
-zero and manufactures a false "nobody is building here" — the single most dangerous
-error in this gap, because it produces the underserved read you want. Use the solution-
-space noun a developer would put in a repo description.
+**The GitHub and npm sets must be broader than the pain set, and should match each
+other.** Repos and packages accumulate at the level of the *space noun*, not the pain
+phrasing. Searching either for the pain sentence returns zero and manufactures a false
+"nobody is building here" — the single most dangerous error in this gap, because it
+produces the underserved read you want. Use the solution-space noun a developer would put
+in a repo description or a package name, and reuse the same terms for both scripts —
+they are two measurements of one axis, not two different questions.
 
 **Named incumbents are excellent keyphrases** on HN and Reddit. Mentions of `Accela`,
 `Granicus`, `Tyler Technologies` over time track the pain more faithfully than generic
@@ -142,7 +158,7 @@ Log the exact keyphrases used per source. They are part of the finding.
 
 ---
 
-## The four sources
+## The five sources
 
 ### 1. HN — `scripts/hn_history.py` (pain side, developer/operator voice)
 
@@ -270,14 +286,49 @@ uv run scripts/gh_history.py \
   flags them. A window summing under 10 repos swings on hobby projects — that is
   `coverage: "thin"`, **except** the fully-fetched all-zero curve, which is `good` (see
   *Coverage honesty*).
-- **This is the one script whose per-series `shape` uses a wider vocabulary** (`rising`,
-  `spike-and-fade`, `no-signal`, `insufficient-data`, plus `emerging`, `declining`,
-  `persistent-flat`). That is **not** the card vocabulary. Map it — see *Vocabulary
-  mapping* below. Copying `"rising"` into `retro_trend.shape` breaks the enum.
+- **This is one of two scripts whose per-series `shape` uses a wider vocabulary**
+  (`rising`, `spike-and-fade`, `no-signal`, `insufficient-data`, plus `emerging`,
+  `declining`, `persistent-flat`). That is **not** the card vocabulary. Map it — see
+  *Vocabulary mapping* below. Copying `"rising"` into `retro_trend.shape` breaks the enum.
+
+### 5. npm — `scripts/npm_history.py` (solution side, second source: are packages accumulating?)
+
+A second, independent read on the same question GitHub answers, because GitHub is a
+single point of failure — unauthenticated `api.github.com/search` 403s from most
+cloud/CI IPs, so a run hosted anywhere but a residential connection can otherwise lose
+the two-curve read entirely. Run both; report both when both answer.
+
+```bash
+uv run scripts/npm_history.py \
+  --terms "permit software" --terms "permitting" \
+  --years 5 \
+  --out runs/<slug>/trends/c01-npm.json
+```
+
+- `series[].source` → **`"npm"`** (§2 enum).
+- **Not an exact census — read this before trusting a count.** GitHub's search API can
+  report an exact `total_count` for a `created:<range>` query; npm's search API has no
+  date-range filter at all. `npm_history.py` fetches the top `--candidates-per-term`
+  search-ranked packages (npm's relevance ranking, not chronological) and buckets *those*
+  by their own creation date. Every series carries `candidates_examined` and
+  `total_matches_reported` so you can see how much of the real population the bucket
+  counts actually cover. When `candidates_examined < total_matches_reported`, older or
+  less-popular packages are under-represented — the script notes this in `note` and caps
+  `coverage` at `thin` once it is material. Never present an npm count with the same
+  confidence as a GitHub count in the same sentence without this caveat.
+- **Shares `gh_history.py`'s classifier directly** (imported, not re-implemented), so its
+  wider vocabulary and the same ±15%/yr flat band apply here too — see *Vocabulary
+  mapping* below, which now covers both scripts. `coverage_for`'s floor is also shared:
+  10 items minimum for `good`, same as GitHub's `MIN_TOTAL_FOR_GOOD_COVERAGE`.
+- No documented rate ceiling (unlike GitHub's 10 req/min), so a 2-3 term run finishes in
+  seconds, not minutes. It still circuit-breaks on 403/429/repeated 5xx like every other
+  script here — no retry-probing, no evasion.
+- The current year bucket is year-to-date and **excluded from slope/shape**, same
+  reasoning as GitHub's.
 
 ### MCP servers are not part of this gap
 
-All four sources are scripts, by design. Both stdio MCPs may simply be absent (Cowork and
+All five sources are scripts, by design. Both stdio MCPs may simply be absent (Cowork and
 other hosts do not run them), so the CLI path is the assumption, not the exception:
 
 - `trend-pulse` for *current* momentum → probe it, and on any failure or absence fall
@@ -344,11 +395,12 @@ warning below.
 
 ### Vocabulary mapping from script output
 
-Only `gh_history.py` needs mapping. `hn_history.py` owns the card vocabulary and
-`gtrends_history.py` borrows its classifier, so both already emit contract values — pass
-those through unchanged rather than re-deriving them.
+`gh_history.py` and `npm_history.py` both need mapping — the latter imports the former's
+classifier directly, so they emit the identical vocabulary and thresholds. `hn_history.py`
+owns the card vocabulary and `gtrends_history.py` borrows its classifier, so both already
+emit contract values — pass those through unchanged rather than re-deriving them.
 
-| `gh_history.py` emits | Card `retro_trend.shape` |
+| `gh_history.py` / `npm_history.py` emit | Card `retro_trend.shape` |
 |---|---|
 | `rising` | `accelerating` |
 | `spike-and-fade` | `spiky-episodic` |
@@ -357,11 +409,12 @@ those through unchanged rather than re-deriving them.
 | `persistent-flat` | `persistent-flat` |
 | `no-signal`, `insufficient-data` | **`null`** — measurement failure, plus `note`. Not a shape. |
 
-`gh_history.py`'s local mirror uses lower bars (±15%/yr for `rising`/`declining`, an
-interior-peak-and-fade test for `spike-and-fade`). So a GitHub `rising` between +15 and
-+60%/yr is drift by the canonical thresholds: map it, then say in `note` that it did not
-clear the accelerating bar. This never matters for the card-level shape — GitHub is the
-solution side and never sets it — but it matters for the two-curve read below.
+The shared classifier uses lower bars (±15%/yr for `rising`/`declining`, an
+interior-peak-and-fade test for `spike-and-fade`) than the canonical thresholds above. So
+a GitHub or npm `rising` between +15 and +60%/yr is drift by the canonical thresholds:
+map it, then say in `note` that it did not clear the accelerating bar. This never matters
+for the card-level shape — GitHub and npm are the solution side and neither ever sets it
+— but it matters for the two-curve read below.
 
 > **The shape you must never assign by default is the one you are hoping for.**
 > `persistent-flat` is the desirable read, so every defect in this pipeline —
@@ -379,7 +432,7 @@ with its own coverage.
 
 **Card-level `slope_pct_per_year`** comes from the **single highest-coverage pain-side
 source** (`hackernews` or `reddit`), and `note` names it: `"slope from hackernews"`.
-GitHub is the solution side and must never enter the pain slope. Google Trends is
+GitHub and npm are the solution side and must never enter the pain slope. Google Trends is
 relative and must never be the headline slope when a pain-side source has good coverage.
 
 **Card-level `shape`** is that same source's shape, unless another pain-side source with
@@ -400,11 +453,12 @@ Divergence is itself a finding. Write it in `note`, in plain words, with both nu
 
 ### The two-curve matrix — the actual point of this gap
 
-Pain side (HN/Reddit) against solution side (GitHub). The words in this matrix are
+Pain side (HN/Reddit) against solution side (GitHub **and** npm — see below for how the
+two solution-side sources combine into one read). The words in this matrix are
 **directions, not `shape` values**: "rising" covers `accelerating` and `emerging`, "flat"
 is `persistent-flat`. Read the matrix with them; write only the enum to the card.
 
-| Pain | Repos | Read | What to do |
+| Pain | Solutions | Read | What to do |
 |---|---|---|---|
 | flat | rising | **Getting solved while you read this.** | Hurry or skip. Check `saturation.competitor_count` before committing. |
 | flat | flat | **Underserved — the good one.** Durable pain, nobody building. | Proceed. Ask the skeptic *why* nobody built it; a structural blocker is the usual answer and it is usually the real story. |
@@ -412,8 +466,29 @@ is `persistent-flat`. Read the matrix with them; write only the enum to the card
 | rising | flat | **Early — best case.** Demand moving, supply hasn't. | Highest-priority card. |
 | rising | rising | Hot and contested. | Only with a real wedge (`skills/wedge-voltage`); differentiation must be structural, not faster. |
 
-"flat pain + flat repos" is not automatically good. It is good **only** when both curves
-have `coverage: "good"`. Two thin curves agreeing on nothing is not agreement.
+"flat pain + flat solutions" is not automatically good. It is good **only** when both the
+pain-side source and the solution-side read below have `coverage: "good"`. Two thin
+curves agreeing on nothing is not agreement.
+
+**Combining GitHub and npm into one solution-side read:**
+
+- **Both answered (`coverage` better than `none` on both):** report both series
+  separately in `series[]`, same as any two pain-side sources that disagree — never
+  average them. If they agree on direction, the matrix read above is well-supported; say
+  so. If they disagree (e.g. GitHub flat, npm rising — packages accumulating in a niche
+  GitHub's search terms miss, or vice versa), name the disagreement in `note` with both
+  numbers, exactly as pain-side disagreement is handled, and treat the *rising* one as the
+  one that sets the matrix column — a rising solution curve on either axis is the one that
+  invalidates "nobody is building here", so the more cautious read wins.
+- **One is `unavailable` (typically GitHub, on a cloud-hosted run), the other answered:**
+  use the one that answered for the matrix column, and say in `note` which source
+  answered and why the other didn't (`"GitHub unavailable: HTTP 403; solution-side read
+  from npm only"`). This is the entire reason npm exists in this gap — do not let a
+  GitHub 403 take down the two-curve read when npm is sitting right there with an answer.
+- **Both `unavailable` or both `thin`/`none`:** the solution-side read is unmeasured, not
+  flat. Say so explicitly (`"no solution-side source achieved usable coverage; two-curve
+  read NOT AVAILABLE"`) and do **not** default the matrix column to "flat" — that is the
+  failure-as-absence bug in exactly the place this whole gap exists to prevent.
 
 ---
 
@@ -426,7 +501,7 @@ not recompute a softer one.** The criteria, so you can read them:
 
 | `coverage` | Criteria |
 |---|---|
-| `good` | Every planned complete bucket fetched, ≥3 usable buckets, no censored buckets, and the whole-window sum clears that source's floor — 20 mentions for HN (`good_min_total`), 10 repos for GitHub (`MIN_TOTAL_FOR_GOOD_COVERAGE`), ≥8 non-partial points and >25% of them nonzero for Trends (`MIN_POINTS_FOR_GOOD`, `THIN_NONZERO_FRACTION`). HN also allows up to 25% of buckets to fail and still call `good` (`max_failed_bucket_share_for_good`) |
+| `good` | Every planned complete bucket fetched, ≥3 usable buckets, no censored buckets, and the whole-window sum clears that source's floor — 20 mentions for HN (`good_min_total`), 10 repos for GitHub (`MIN_TOTAL_FOR_GOOD_COVERAGE`), 10 packages for npm (same function, imported directly from `gh_history.py`), ≥8 non-partial points and >25% of them nonzero for Trends (`MIN_POINTS_FOR_GOOD`, `THIN_NONZERO_FRACTION`). HN also allows up to 25% of buckets to fail and still call `good` (`max_failed_bucket_share_for_good`). For npm specifically, `good` additionally requires `candidates_examined >= total_matches_reported` (or the term simply had few enough real matches that the candidate cap never bound) — a sampled series is capped at `thin` regardless of the raw counts, per the SAMPLING CAVEAT in §5 above |
 | `thin` | Fetching worked but the series cannot carry weight: any bucket `null` past that tolerance, or <3 usable buckets, or the sum below the source's floor, or any bucket censored at the request limit, or a Trends peak index < 5 inside a comparison group (`DOMINATED_PEAK` — a stronger peer took the scale) |
 | `none` | No bucket returned a usable number — host unreachable, circuit-broken, query rejected, empty series, or below the source's reporting threshold |
 
@@ -448,14 +523,14 @@ Rules that follow from it:
    (`▁` vs `?`), they set coverage differently, and confusing them is the failure this
    section exists to prevent. **A source that failed is never reported as "no discussion
    found" / "no interest" / "nobody is building."**
-3. **All four sources `thin`/`none` is itself a finding.** Write it in `note`:
+3. **All five sources `thin`/`none` is itself a finding.** Write it in `note`:
    `"no source achieved good coverage; history unmeasured, not absent"`. Do not write
    `skeptic.under_researched` — that field belongs to the skeptic and means something
    else (absence of counter-evidence). Hand the coverage failure over; do not overwrite.
 
 Append every script's `source_health` entry to `runs/<slug>/source_health.json` per
 CONTRACTS cross-cutting rule 5, including that rule's `fallback` key (`null` when the
-source has no fallback, as none of these four do):
+source has no fallback, as none of these five do):
 
 ```json
 {"source": "github", "status": "degraded", "fallback": null,
@@ -492,7 +567,7 @@ Field rules:
 - `slope_pct_per_year` — number or `null`. One decimal. Never a percentage of a
   percentage; never averaged across sources.
 - `series[]` — one entry per source **attempted**, including failures. `source` must be
-  a §2 enum value: `hackernews`, `reddit`, `google-trends`, `github`.
+  a §2 enum value: `hackernews`, `reddit`, `google-trends`, `github`, `npm`.
 - `buckets[]` — `period` and `count` are required. `count` is an integer or `null`,
   **never 0 for a failed fetch.** Extra script keys (`window`, `partial`, `detail`,
   `terms_ok` from GitHub; `count_exhaustive` from HN; `units` and `n_partial_points` from
@@ -540,8 +615,9 @@ retro_trend   shape: persistent-flat   slope: +2.1 %/yr   [from hackernews]
   reddit         2021-2025      ▅▅█▅▅        88 91 104 90 87              coverage good
   google-trends  2021H1-2025H2  ▄▅▄▄▅        relative 0-100, NOT volume    coverage good
   github         2021-2025      ▁·▂▁?        2 0 3 1 ?                    coverage thin (sum<10, 1 failed)
-  read: flat pain + flat builders -> underserved. GitHub thin; do not lean on it.
-  keyphrases: "permit status", "permitting software" | github: "permit software", "permitting"
+  npm            2021-2025      ▁▁▂▁▁        1 0 2 1 0                    coverage good
+  read: flat pain + flat builders (npm) -> underserved. GitHub thin; npm carries the solution-side read.
+  keyphrases: "permit status", "permitting software" | github/npm: "permit software", "permitting"
 ```
 
 Rules for the block:
@@ -572,8 +648,9 @@ Rules for the block:
    flat. `hn_history.py` and `gtrends_history.py` already annualize — pass their
    `slope_pct_per_year` through, and if you ever compute one yourself read
    `params.bucket` / `params.buckets_per_year` first.
-8. **`gh_history.py` vocabulary copied into the card.** `rising`, `spike-and-fade`,
-   `no-signal`, and `insufficient-data` are not contract values. Map them.
+8. **`gh_history.py` / `npm_history.py` vocabulary copied into the card.** `rising`,
+   `spike-and-fade`, `no-signal`, and `insufficient-data` are not contract values. Map
+   them — both scripts emit the same set, from the same shared classifier.
 9. **Platform growth read as pain growth.** All three count-based sources grow ~10%/yr on
    their own. That is why the flat band is ±15%.
 10. **Sources averaged into one number.** Forbidden. Divergence is the signal; averaging
@@ -590,6 +667,12 @@ Rules for the block:
     available and always correct (CONTRACTS cross-cutting rule 1).
 15. **A GitHub all-zero curve discounted to `thin`.** Fully fetched and empty is `good`
     coverage and a real finding; downgrading it deletes the underserved read.
+16. **A GitHub 403 taken as "the two-curve read is unavailable."** It is not — run
+    `npm_history.py`. Only both sources failing makes the solution side unmeasured.
+17. **An npm count trusted as exhaustive.** It is the top `--candidates-per-term`
+    search-ranked packages, not every package matching the term. Check
+    `candidates_examined` against `total_matches_reported` before treating a low npm
+    count as "nobody is building" rather than "we didn't look far enough."
 
 ## Boundaries
 

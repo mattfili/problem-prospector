@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
-"""Scan agents/, commands/, and skills/ for CONTRACTS §4 enum drift.
+"""Scan agents/, commands/, skills/, and scripts/ for CONTRACTS §4 enum drift.
 
 This check exists because enum drift actually happened during the build: three
 agents agreed on `inventory_gate.verdict == "excluded"` while CONTRACTS defined
 `"exclude"`. Internally consistent, contract-noncompliant, and completely
-invisible until a conformant consumer sees a value it does not recognize.
+invisible until a conformant consumer sees a value it does not recognize. It
+also happened in code, not just prose — gh_history.py's local classifier
+returned shape literals (`"rising"`, `"spike-and-fade"`) outside the §4 enum
+before scripts/ was in scope here — so both .md and .py files are scanned.
 
-Only flags values written in a JSON-ish assignment position (`"field": "value"`
-or `field == "value"`), so prose that mentions a wrong spelling in order to
-warn against it does not trip the check. That distinction matters here: several
-files deliberately say 'write "exclude", never "excluded"', and punishing that
-would discourage exactly the diligence we want.
+Only flags values written in a JSON-ish assignment position (`"field": "value"`,
+`field == "value"`, or `field = "value"` for Python source), so prose that
+mentions a wrong spelling in order to warn against it does not trip the check.
+That distinction matters here: several files deliberately say 'write "exclude",
+never "excluded"', and punishing that would discourage exactly the diligence we
+want.
 
     python3 tests/validate_enums.py
 """
@@ -64,11 +68,22 @@ SUFFIXABLE = ("searched-no-", "stopped", "skipped")
 # but saturation.read is free text passed through from the upstream tool, so a
 # field-name-only check would produce false positives on the honest case.
 
-SEARCH_DIRS = ["agents", "commands", "skills"]
+# gh_history.py's local classifier deliberately uses a WIDER `shape` vocabulary
+# than the card's closed enum (skills/retro-trends/SKILL.md maps it before it
+# ever reaches `retro_trend.shape` — this file's own values are pre-translation
+# and never written to a card directly). Exempt it by (path suffix, field) so a
+# real accidental drift in the *card-facing* field elsewhere in scripts/ still
+# gets caught.
+WIDER_VOCAB = {("scripts/gh_history.py", "shape")}
 
-# "field": "value"   |   field == "value"   |   .field == "value"
+SEARCH_DIRS = ["agents", "commands", "skills", "scripts"]
+
+# "field": "value"   |   field == "value"   |   .field == "value"   |   field = "value"
+# The bare `=` form only matters in scripts/*.py (Python assignment); it's included
+# unconditionally because it never fires outside the known ENUMS field names below —
+# an unrelated `x = "foo"` never matches since `x` isn't a key in ENUMS.
 ASSIGN = re.compile(
-    r'["\']?\.?(?P<field>[a-z_]+)["\']?\s*(?::|==)\s*["\'](?P<value>[^"\']{1,40})["\']'
+    r'["\']?\.?(?P<field>[a-z_]+)["\']?\s*(?::|==|=)\s*["\'](?P<value>[^"\']{1,40})["\']'
 )
 
 
@@ -80,14 +95,18 @@ def main() -> int:
         base = root / d
         if not base.is_dir():
             continue
-        for path in sorted(base.rglob("*.md")):
+        paths = sorted(set(base.rglob("*.md")) | set(base.rglob("*.py")))
+        for path in paths:
             # The vendored marketing tree is upstream code with its own
             # vocabulary; our enums do not apply to it.
-            if "skills/marketing/" in str(path.relative_to(root)):
+            rel = str(path.relative_to(root))
+            if "skills/marketing/" in rel:
                 continue
             for lineno, line in enumerate(path.read_text().splitlines(), 1):
                 for m in ASSIGN.finditer(line):
                     field, value = m.group("field"), m.group("value")
+                    if (rel, field) in WIDER_VOCAB:
+                        continue
                     allowed = ENUMS.get(field)
                     if allowed is None or value in allowed:
                         continue

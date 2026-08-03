@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --quiet --script
 # /// script
 # requires-python = ">=3.11,<3.13"
 # dependencies = ["requests"]
@@ -128,9 +128,13 @@ def log(msg: str) -> None:
 # float | None}, where `counts` is chronological and may contain None for
 # buckets that failed to fetch. Nones are dropped, never treated as zero.
 #
-# hn_history.py owns this vocabulary. We import it when present so the two
-# sources cannot drift apart, and keep the mirror below so this script still
-# runs standalone.
+# This is deliberately NOT hn_history.py's classifier. gh_history measures
+# the solution side (repo creation), which needs its own, wider vocabulary
+# and lower flat-band threshold (±15%/yr here vs hn's ±60%/yr) — GitHub-wide
+# repo creation drifts ~10%/yr as a platform, so hn's thresholds would read
+# ordinary platform growth as a real trend. skills/retro-trends/SKILL.md
+# documents this divergence and maps between the two vocabularies; keep them
+# separate rather than importing one into the other.
 # --------------------------------------------------------------------------
 
 SHAPES = (
@@ -155,7 +159,10 @@ def _ols_slope(xs: Sequence[float], ys: Sequence[float]) -> float:
     return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / denom
 
 
-def _classify_series_local(counts: Sequence[int | None]) -> dict[str, Any]:
+CLASSIFIER_SOURCE = "gh_history (local)"
+
+
+def classify_series(counts: Sequence[int | None]) -> dict[str, Any]:
     usable = [(i, c) for i, c in enumerate(counts) if c is not None]
     if len(usable) < MIN_BUCKETS_FOR_SHAPE:
         return {"shape": "insufficient-data", "slope_pct_per_year": None}
@@ -193,37 +200,6 @@ def _classify_series_local(counts: Sequence[int | None]) -> dict[str, Any]:
         shape = "persistent-flat"
 
     return {"shape": shape, "slope_pct_per_year": slope_pct}
-
-
-def _load_classifier() -> tuple[Any, str]:
-    """Prefer hn_history's classifier; fall back to the local mirror.
-
-    Validated rather than trusted: a same-named function with a different
-    return shape would silently corrupt the card, so we probe it once.
-    """
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    try:
-        from hn_history import classify_series as imported  # type: ignore
-    except Exception as exc:
-        # Logged, never silent: which classifier scored the curve changes how the
-        # shape should be read, so the fallback has to be visible on stderr as
-        # well as in `note`.
-        log(
-            f"[info] hn_history.classify_series not importable ({type(exc).__name__}: {exc}); "
-            "using local mirror"
-        )
-        return _classify_series_local, "gh_history (local mirror)"
-    try:
-        probe = imported([1, 2, 3])
-        if not isinstance(probe, dict) or "shape" not in probe:
-            raise TypeError(f"unexpected return shape: {probe!r}")
-    except Exception as exc:
-        log(f"[warn] hn_history.classify_series unusable ({exc}); using local mirror")
-        return _classify_series_local, "gh_history (local mirror)"
-    return imported, "hn_history.classify_series"
-
-
-classify_series, CLASSIFIER_SOURCE = _load_classifier()
 
 
 def coverage_for(counts: Sequence[int | None]) -> str:

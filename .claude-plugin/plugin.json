@@ -6,6 +6,7 @@
     "name": "Matt Fili"
   },
   "homepage": "https://github.com/mattfili/problem-prospector",
+  "repository": "https://github.com/mattfili/problem-prospector",
   "license": "MIT",
   "keywords": [
     "market-research",
@@ -13,9 +14,5 @@
     "opportunity-discovery",
     "competitive-analysis",
     "no-api-keys"
-  ],
-  "commands": "./commands",
-  "agents": "./agents",
-  "skills": "./skills",
-  "mcpServers": "./.mcp.json"
+  ]
 }

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --quiet --script
 # /// script
 # requires-python = ">=3.11,<3.13"
 # dependencies = ["fastembed", "scikit-learn", "numpy"]
@@ -143,8 +143,12 @@ def _embed_fastembed(texts: Sequence[str]) -> list[list[float]]:
     # Lazy import so `--backend offline` works with the package absent.
     from fastembed import TextEmbedding
 
+    # fastembed's own default (256) batches enough text through ONNX at once
+    # to OOM on a normal-sized evidence corpus (~1000 records) on a fresh
+    # machine. Keep it low by default; override for a bigger box.
+    batch_size = int(os.environ.get("PROSPECTOR_EMBED_BATCH_SIZE", "16"))
     model = TextEmbedding(model_name=FASTEMBED_MODEL_NAME)
-    return [vec.tolist() for vec in model.embed(list(texts))]
+    return [vec.tolist() for vec in model.embed(list(texts), batch_size=batch_size)]
 
 
 def embed(texts: Sequence[str], backend: str = "fastembed") -> list[list[float]]:

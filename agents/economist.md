@@ -263,8 +263,8 @@ requires it. `b2b-operator` with `complainer_is_buyer: false` everywhere is a co
 it usually means the operators are being *talked about* rather than talking — the frontline is
 venting about a system their director is perfectly content with. Resolve it before you write:
 either the class is wrong, or the marker was mis-set. Whichever you conclude, **name the
-contradiction in your return summary** (and in `_notes` in your sidecar). There is no `wtp.note`
-field in CONTRACTS §4 — do not invent one.
+contradiction in your return summary and in `wtp.note`** on the card — CONTRACTS §4's additive
+panel keys make `wtp.note` legal for exactly this kind of caveat.
 
 ---
 
@@ -378,7 +378,7 @@ what this could charge; it must not manufacture a number.
 | Stitched claim | `"we spend … thousands … every month"` | Verbatim, ≤15 words, one continuous span |
 | Corpus pollution | `--out runs/<slug>/evidence/...` on a WTP search | Searches go to stdout or `$W/`; evidence is frozen after §3.2 |
 | Lost panel | Card has no `wtp` after all three panel agents finish | Sidecar first; re-run the merge from it, no re-research |
-| Field drift | `workaround_cost[].evidence_url`, or a `wtp.note` key | `evidence_url` is Leg 1 only; §4 has no `wtp.note` |
+| Field drift | `workaround_cost[].evidence_url` | `evidence_url` is Leg 1 only, not a panel-wide key |
 | Role bleed | Writing `saturation.competitor_count` because you had it handy | One panel, one agent |
 
 ---

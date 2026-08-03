@@ -63,6 +63,7 @@ SCRIPTS=(
   reddit_history.py
   gtrends_history.py
   gh_history.py
+  npm_history.py
   crawl.py
   trends_cli.py
   reality_cli.py
@@ -74,14 +75,14 @@ section "presence"
 for s in "${SCRIPTS[@]}"; do
   if [ -f "scripts/$s" ]; then ok "scripts/$s exists"; else bad "scripts/$s exists" "file not found"; fi
 done
-for f in plugin.json .mcp.json .claude-plugin/marketplace.json docs/CONTRACTS.md README.md LICENSE ATTRIBUTION.md; do
+for f in .claude-plugin/plugin.json .mcp.json .claude-plugin/marketplace.json SKILL.md docs/CONTRACTS.md README.md LICENSE ATTRIBUTION.md; do
   if [ -f "$f" ]; then ok "$f exists"; else bad "$f exists" "file not found"; fi
 done
 
 # ---------------------------------------------------------------------------
 section "manifests are valid JSON"
 # ---------------------------------------------------------------------------
-for f in plugin.json .mcp.json .claude-plugin/marketplace.json; do
+for f in .claude-plugin/plugin.json .mcp.json .claude-plugin/marketplace.json; do
   if [ ! -f "$f" ]; then skip "$f parses"; continue; fi
   if python3 -m json.tool "$f" > /dev/null 2>&1; then ok "$f parses"; else bad "$f parses" "invalid JSON"; fi
 done
@@ -109,6 +110,27 @@ for d in skills/*/; do
   fi
   ok "skills/$n frontmatter"
 done
+
+# ---------------------------------------------------------------------------
+section "root SKILL.md has valid frontmatter"
+# ---------------------------------------------------------------------------
+# The plugin-root entry point read when native command/agent discovery is not
+# active (e.g. a raw skill/zip upload rather than a marketplace plugin install).
+f="SKILL.md"
+if [ ! -f "$f" ]; then
+  bad "SKILL.md frontmatter" "missing"
+elif [ "$(head -1 "$f")" != "---" ]; then
+  bad "SKILL.md frontmatter" "does not start with ---"
+else
+  fm_name="$(awk '/^---$/{c++; next} c==1 && /^name:/{print $2; exit}' "$f")"
+  if [ "$fm_name" != "problem-prospector" ]; then
+    bad "SKILL.md frontmatter name" "name: '$fm_name' != 'problem-prospector'"
+  elif ! awk '/^---$/{c++; next} c==1 && /^description:/{found=1} END{exit !found}' "$f"; then
+    bad "SKILL.md frontmatter description" "missing description:"
+  else
+    ok "SKILL.md frontmatter"
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 section "agents have valid frontmatter"
@@ -265,6 +287,7 @@ NET_TESTS=(
   "reddit_history.py|--query permit --subreddits sysadmin --years 2"
   "gtrends_history.py|--query 'permit software'"
   "gh_history.py|--terms 'permit software' --years 2"
+  "npm_history.py|--terms 'permit software' --years 2 --candidates-per-term 5"
   "crawl.py|--url https://plausible.io/#pricing"
   "trends_cli.py|--list-sources"
   "reality_cli.py|--idea 'permit status tracking for small cities'"

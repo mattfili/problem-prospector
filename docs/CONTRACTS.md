@@ -229,38 +229,24 @@ one panel.
 
 ### Additive panel keys
 
-A panel may carry these **optional** keys beyond the shape above. They are
-named here so the policy is uniform — previously some agents added notes while
-others were told not to, on the grounds that §4 did not define them.
-
-| Key | Owner | Purpose |
-|---|---|---|
-| `frequency.note` | distiller | caveats on the counts (e.g. one community dominates the spread) |
-| `intensity.note` | distiller | why the score landed where it did when the markers alone do not explain it |
-| `wtp.note` | economist | caveats on the spend evidence |
-| `retro_trend.render_block` | historian | the prepared ASCII sparkline/coverage table, so the renderer pastes it verbatim rather than redrawing and losing per-source scaling, raw counts, and the Trends relativity caveat |
-| `skeptic.note` | skeptic | scope of the search performed, especially before setting `under_researched` |
-
-Rules: these are **additive only** — a consumer must work when they are absent,
-and no consumer may depend on one. They carry explanation, never data another
-field already holds, and never a score. Any other key not in this table or the
-shape above does not belong on a card.
-
-### Additive keys (optional, declared here so they are not drift)
-
-Three keys beyond the shape above are legal on a card. Producers may omit them;
-consumers must tolerate their absence. Nothing else may be added — an undeclared
-key is contract drift with no error message.
+Five keys beyond the shape above are legal on a card. They are named here so
+the policy is uniform — previously some agents added notes while others were
+told not to, on the grounds that §4 did not define them. Producers may omit
+them; consumers must tolerate their absence. Nothing else may be added — an
+undeclared key (`skeptic.confidence`, `saturation.note`, or any other) is
+contract drift with no error message.
 
 | Key | Written by | Read by | Why it exists |
 |---|---|---|---|
 | `frequency.note` | distiller | render header, `opportunity-cards.md` | Which §3.3 corrections fired (repetition demotion, echo-chamber cap, engagement-driven promotion, 2×2 boundary position). Without it a `read` is not reproducible. `null` when nothing fired. |
 | `intensity.note` | distiller | `opportunity-cards.md` | Which cap was applied and which markers were left `false` for want of a quote. A score of 2 beside four `true` markers is unreadable otherwise. |
+| `wtp.note` | economist | render header, `opportunity-cards.md` | Caveats on the spend evidence — e.g. a cited tool's pricing tier was retired after the post, or the "existing spend" testimony predates a pivot. Without it a `wtp.read` looks more current than it is. |
 | `retro_trend.render_block` | historian | `/prospect` stage 6 | The finished ASCII trend block, newline-joined, already scaled per source with counts, coverage and the Trends relativity caveat. The renderer pastes it verbatim rather than re-deriving a sparkline that could disagree with the series it came from. |
+| `skeptic.note` | skeptic | render header, `opportunity-cards.md` | Scope of the search performed — what "no counter-evidence found" actually covered — especially before `under_researched` is set. |
 
-There is deliberately **no** `wtp.note`, no `skeptic.confidence`, no
-`saturation.note`. A panel with something to say says it in a declared field or
-in the agent's return summary, not in a key invented at write time.
+Rules: these are **additive only** — a consumer must work when they are
+absent, and no consumer may depend on one. They carry explanation, never data
+another field already holds, and never a score.
 
 ---
 

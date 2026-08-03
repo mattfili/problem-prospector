@@ -216,9 +216,11 @@ encodes all three axis values without naming them:
 > "Give the waiting contractor a nightly SMS on permit status, scraped from the
 > city's public portal."
 
-Then write the pool to `runs/<slug>/wedges/candidates-<cluster_id>.jsonl`, one
-record per line. This is a Stage-1 scratch artifact kept for audit; it is **not**
-a contract file and no downstream consumer reads it.
+Then write the pool to `runs/<slug>/wedges/.scratch/candidates-<cluster_id>.jsonl`,
+one record per line. This is a Stage-1 scratch artifact kept for audit; it is
+**not** a contract file and no downstream consumer reads it. It lives in
+`.scratch/`, not `wedges/` directly, so a consumer globbing `wedges/*.json`
+for "does this run have wedges" never picks it up.
 
 ```json
 {"id": "c01-cand-07", "text": "Give the waiting contractor a nightly SMS on permit status, scraped from the city's public portal.", "voltage": 3, "axes": {"who_first": "contractor's office admin", "slice": "status opacity only", "substrate": "scrape the public portal, replace nothing"}}
@@ -241,8 +243,17 @@ Stage 1 over-generates on purpose. Stage 2 makes the collapse measurable.
 
 The pain centroid is the mean of the cluster's **member evidence text** — the
 verbatim `title` + `text` (CONTRACTS §2) of every `member_id` listed for this
-`cluster_id` in `clusters.json`. Truncate each to a comparable length (~400
-chars); do not paraphrase.
+`cluster_id` in `clusters.json`. **Truncate each to ~150 chars — the same
+register as the candidate sentences this centroid will gate**, not the full
+post. Do not paraphrase.
+
+This length match matters as much as the model match. A candidate is one
+12–25-word sentence (1b). If the centroid and its footprint are built from
+much longer member text, short and long text sit in systematically different
+regions of the embedding space regardless of topical relevance — the gate
+ends up measuring text length, not grounding. (Stage 2c makes the identical
+point about candidate-to-candidate length; it applies here too, member-to-
+candidate.)
 
 Also compute, for **every member**, its own distance to that centroid, and take
 the **p90** of those distances. That p90 is the pain's observed footprint and it
@@ -273,21 +284,45 @@ for path in glob.glob(f"{run}/evidence/*.jsonl"):
         ev[rec["id"]] = rec
 
 members = [ev[i] for i in cl["member_ids"] if i in ev]
-member_texts = [f"{m.get('title') or ''} {m.get('text') or ''}".strip()[:400] for m in members]
+member_texts = [f"{m.get('title') or ''} {m.get('text') or ''}".strip()[:150] for m in members]
 
 pain_vecs = embed(member_texts)
 # footprint: how far the real complaints sit from their own centroid
 member_d = [centroid_distance(v, pain_vecs) for v in pain_vecs]
 p90 = round(percentile(member_d, 90), 3)
 
-cands = [json.loads(l) for l in open(f"{run}/wedges/candidates-{CID}.jsonl")]
+# Satisfiability self-test: the gate is only trustworthy if it would admit
+# the cluster's own summary of its own pain. If cluster.py's canonical
+# string sits outside the p90 footprint, the gate is miscalibrated for this
+# cluster (register/topic mismatch in the member pool, a bad centroid, etc) —
+# stop and say so rather than hard-dropping every candidate against a gate
+# that fails its own sanity check.
+canon_vec = embed([cl["canonical"]])[0]
+canon_distance = round(centroid_distance(canon_vec, pain_vecs), 3)
+gate_self_test_passed = canon_distance <= p90
+
+cands = [json.loads(l) for l in open(f"{run}/wedges/.scratch/candidates-{CID}.jsonl")]
 cand_vecs = embed([c["text"] for c in cands])   # wedge SENTENCE only
 
 for c, v in zip(cands, cand_vecs):
     c["pain_distance"] = round(centroid_distance(v, pain_vecs), 3)
-print(json.dumps({"pain_p90_gate": p90, "candidates": cands}, indent=2))
+print(json.dumps({
+    "pain_p90_gate": p90,
+    "gate_self_test": {"canonical_distance": canon_distance, "passed": gate_self_test_passed},
+    "candidates": cands,
+}, indent=2))
 PY
 ```
+
+**Check `gate_self_test.passed` before trusting anything else this snippet
+produced.** If it is `false`, the p90 footprint does not even admit the
+cluster's own `canonical` description of its own pain — do not proceed to
+hard-drop candidates against it. Record it instead:
+`{"source": "wedge-voltage:pain-gate", "status": "degraded", "fallback": null, "detail": "gate_self_test failed on <cluster_id>: canonical_distance=<x> > p90=<y>"}`
+in `runs/<slug>/source_health.json`, and say so plainly in the Stage-3
+presentation rather than silently dropping every candidate. A gate that
+fails its own sanity check is not a signal to distrust the candidates; it is
+a signal to distrust the gate.
 
 If `embed()` / `centroid_distance()` / `percentile()` signatures differ from the
 above, read `scripts/cluster.py` and adapt — but never swap the model and never
@@ -329,15 +364,16 @@ Same script, same embedding space as `clusters.json`:
 
 ```bash
 uv run scripts/cluster.py \
-  runs/<slug>/wedges/candidates-<cluster_id>.jsonl \
+  runs/<slug>/wedges/.scratch/candidates-<cluster_id>.jsonl \
   --min-clusters 6 \
   --percentile 35 \
-  --out runs/<slug>/wedges/candidate-clusters-<cluster_id>.json
+  --out runs/<slug>/wedges/.scratch/candidate-clusters-<cluster_id>.json
 ```
 
 Inputs are **positional** (files or directories); `--out` writes the payload and
 stdout stays parseable JSON either way. `candidate-clusters-<cluster_id>.json` is
-scratch like the candidate pool — the only contract file this skill produces is
+scratch like the candidate pool, kept in `.scratch/` for the same glob-collision
+reason — the only contract file this skill produces is
 `wedges/<cluster_id>.json`. Run `uv run scripts/cluster.py --help` once per
 session if you have not; flag names may drift. Two things must not be adapted
 away: the model stays bge, and the cut stays adaptive.

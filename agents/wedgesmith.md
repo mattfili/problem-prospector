@@ -75,7 +75,7 @@ If `cards/<cluster_id>.json` has `skeptic.under_researched: true`, carry that la
 verbatim into your presentation and your return message. A tidy wedge table over
 under-researched pain reads as validation; it is not.
 
-`mkdir -p runs/<slug>/wedges` before writing.
+`mkdir -p runs/<slug>/wedges/.scratch` before writing.
 
 ## Procedure
 

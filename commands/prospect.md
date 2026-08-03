@@ -181,7 +181,7 @@ Write `$R/inputs.json` (CONTRACTS §1) **before any capture**: `slug`, `inspirat
 
 ```bash
 jq -e '.matrix|length>=6 and length<=12' $R/inputs.json >/dev/null \
-  && jq -e '[.matrix[]|select(.cell_id and .persona and .vertical and .framing and (.queries|length>0))]|length == (.matrix|length)' $R/inputs.json >/dev/null \
+  && jq -e '(.matrix|map(select(.cell_id and .persona and .vertical and .framing and (.queries|length>0)))|length) == (.matrix|length)' $R/inputs.json >/dev/null \
   || echo "HALT: inputs.json invalid — fix the matrix before capture"
 ```
 
@@ -230,10 +230,18 @@ for src in $(ls $E/.staging/*.jsonl 2>/dev/null | xargs -n1 basename \
     | jq -Rc 'fromjson? | select(type=="object" and .id)' \
     | jq -sc 'unique_by(.id)[]' > $E/$src.jsonl.tmp && mv $E/$src.jsonl.tmp $E/$src.jsonl
 done
+raw=$(cat $E/.staging/health-*.jsonl 2>/dev/null | wc -l | tr -d ' ')
 cat $E/.staging/health-*.jsonl 2>/dev/null | jq -Rc 'fromjson?' >> $R/source_health.json
+parsed=$(cat $E/.staging/health-*.jsonl 2>/dev/null | jq -Rc 'fromjson?' | wc -l | tr -d ' ')
+if [ "$raw" != "$parsed" ]; then
+  printf '%s\n' "{\"source\":\"source_health-merge\",\"status\":\"degraded\",\"fallback\":null,\"detail\":\"$((raw - parsed)) of $raw staged health line(s) dropped as malformed/truncated during merge\"}" >> $R/source_health.json
+fi
 ```
 
-`fromjson?` drops any truncated line instead of failing the whole merge. The `sed` strips a
+`fromjson?` drops any truncated line instead of failing the whole merge — the
+`raw`/`parsed` check above exists so that drop is never silent: a line lost
+here is a lost degradation record, the one thing this file exists to
+preserve. The `sed` strips a
 `-<cell_id>` suffix of any prefix letter (`-m03`, and `/diligence`'s `-d01`), so `<source>`
 is what remains: it must be an exact CONTRACTS §2 enum value (`google-trends`, never
 `google_trends`) — if a prefix is off-enum, fix the filename, do not invent a destination.

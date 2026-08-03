@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --quiet --script
 # /// script
 # requires-python = ">=3.11,<3.13"
 # dependencies = ["idea-reality-mcp>=0.5.0,<0.6.0"]

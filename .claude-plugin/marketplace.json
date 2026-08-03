@@ -12,7 +12,7 @@
     {
       "name": "problem-prospector",
       "source": "./",
-      "description": "Evidence-first discovery of business-shaped problems, wedged into MVP proposals. No API keys anywhere in the research path.",
+      "description": "Evidence-first discovery of business-shaped problems: capture signal from key-free public sources, cluster it, separate intensity from frequency, stress-test willingness-to-pay against mandatory counter-evidence, then wedge survivors into MVP shapes with transparent subscores.",
       "version": "0.1.0",
       "author": {
         "name": "Matt Fili"
@@ -21,7 +21,9 @@
       "keywords": [
         "market-research",
         "idea-validation",
-        "opportunity-discovery"
+        "opportunity-discovery",
+        "competitive-analysis",
+        "no-api-keys"
       ]
     }
   ]

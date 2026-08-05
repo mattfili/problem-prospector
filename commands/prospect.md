@@ -52,15 +52,19 @@ bare `jq -e` over a glob.
 | 2 | Capture | `scout` × cells | **parallel, 4–6 concurrent** | `inputs.json` valid, 6–12 cells |
 | 2b | Merge staging | you | — | all scouts returned |
 | 3 | Distill | `distiller` × 1 | serial | `evidence/*.jsonl` ≥40 lines |
-| 4 | Analyze | `economist` + `skeptic` + `historian` × passing clusters | **parallel, widest fan-out** | `clusters.json` non-empty, cards have `frequency`+`intensity` |
+| 3.5 | Cap analysis pool | you | — | `clusters.json` non-empty, cards have `frequency`+`intensity` |
+| 4 | Analyze | `economist` + `skeptic` + `historian` × batches of the analysis pool | **parallel, widest fan-out** | analysis pool computed |
 | 4b | Reconcile panels | you | — | analyze wave returned |
-| 5 | Saturation | you | — | all three panels present |
-| 6 | Render | you | — | every **passing** card has all eight panels |
+| 5 | Saturation | you | — | all three panels present (pool cards) or `analysis_capped` set (capped cards) |
+| 6 | Render | you | — | every **passing, uncapped** card has all eight panels |
 | 7 | Wedge → shape → context → distribute | 4 Tasks per card | **sequential within a card, sequential across cards** | `opportunity-cards.md` written |
 
 Stage 2 is parallel because a dozen cells run serially is unusable. Stage 4 is the
-widest fan-out (3 × passing clusters) and the one place where the run actually spends
-its wall clock. Stage 7 is sequential in both dimensions, for reasons given there.
+widest fan-out and the one place where the run actually spends its wall clock, which
+is exactly why Stage 3.5 bounds *how wide* — analysis runs on the capped pool
+(`3 × flags.top`, min 9), not on every cluster that happened to pass the inventory
+gate, and Stage 4 batches ~4 clusters per Task instead of one Task per cluster. Stage
+7 is sequential in both dimensions, for reasons given there.
 
 ---
 
@@ -310,50 +314,115 @@ clusters** — that leaves `cut_basis` lying about what produced the shape.
 
 ---
 
-## Stage 4 — Analyze (economist + skeptic + historian, in parallel, per cluster)
+## Stage 3.5 — Cap the analysis pool (you)
 
-**This is the widest fan-out in the run: 3 × passing clusters.** Nine clusters is 27
-Tasks. Fan out over cards where `inventory_gate.verdict == "pass"` only — the gate is a
-gate, and an excluded card keeps its `null` panels on disk (§3.7):
+Stage 4 is expensive — three Tasks' worth of WTP/skeptic/trend research per cluster —
+and only `flags.top` of the clusters that reach it will ever be wedged. Running it on
+every gate-passing cluster is the single biggest source of wasted Tasks and tokens in
+this pipeline: a broad matrix routinely produces a dozen-plus surviving clusters. This
+stage bounds Stage 4 to a pool sized with headroom for skips, not to the full
+gate-passing set.
 
 ```bash
-PASS=$(jq -r 'select(.inventory_gate.verdict=="pass")|.cluster_id' $R/cards/*.json)
+TOP=$(jq -r '.flags.top // 5' $R/inputs.json)
+CAP=$(( TOP*3 > 9 ? TOP*3 : 9 ))
+
+# Rank every gate-passing card by intensity desc, then cluster_size desc — both
+# already on disk from Stage 3, free to sort by, no extra research.
+jq -s --argjson cap "$CAP" -c '
+  [.[] | select(.inventory_gate.verdict=="pass")]
+  | sort_by([-(.intensity.score // 0), -(.frequency.cluster_size // 0)])
+  | to_entries[]
+  | {cluster_id: .value.cluster_id, rank: (.key+1)}
+' $R/cards/*.json > $R/cards/.analysis-rank.jsonl
+
+# Patch analysis_capped onto everything past the cap. Cards at or under the cap are
+# untouched and proceed to Stage 4 as the analysis pool.
+jq -c --argjson cap "$CAP" 'select(.rank > $cap)' $R/cards/.analysis-rank.jsonl | while read -r row; do
+  CID=$(echo "$row" | jq -r .cluster_id)
+  RANK=$(echo "$row" | jq -r .rank)
+  jq --argjson rank "$RANK" --argjson cap "$CAP" \
+     '.analysis_capped = {rank: $rank, cap: $cap}' \
+     $R/cards/$CID.json > $R/cards/.$CID.json.tmp && mv $R/cards/.$CID.json.tmp $R/cards/$CID.json
+done
+
+# The pool Stage 4 actually works on.
+POOL=$(jq -c --argjson cap "$CAP" 'select(.rank <= $cap) | .cluster_id' $R/cards/.analysis-rank.jsonl | jq -s -c .)
+echo "analysis pool: $(echo "$POOL" | jq 'length') of $(jq 'length' $R/cards/.analysis-rank.jsonl) gate-passing clusters (cap=$CAP)"
 ```
 
-Each Task receives `slug` + one `cluster_id`. Nothing else; they read disk.
+`$R/cards/.analysis-rank.jsonl` is scratch, dot-prefixed so `cards/*.json` never globs
+it — do not treat it as a contract path. `analysis_capped` (CONTRACTS §4) is a
+different finding from `inventory_gate.verdict == "exclude"`: it is not a verdict on
+the idea, only a statement that this run's budget went to higher-ranked candidates
+first. Every capped card keeps `frequency`/`intensity`/`quadrant`/`inventory_gate` —
+Stage 3's promise that every surviving cluster gets a card is untouched; only the
+expensive panels are deferred.
 
-- **`economist`** → fills `wtp` (§3.4: `existing_spend`, `workaround_cost`, `buyer_class`,
-  `budget_line`, `read`).
-- **`skeptic`** → fills `skeptic` (§3.5: `failed_attempts`, `churn_testimony`,
+If `$CAP` is at or above every gate-passing cluster (a small or niched run), the pool
+is simply everyone and nothing gets capped — say so, do not narrate a cap that did not
+bind.
+
+---
+
+## Stage 4 — Analyze (economist + skeptic + historian, in parallel, batched over the pool)
+
+**Fan out over the analysis pool from Stage 3.5, not every gate-passing cluster** —
+that cap is the whole point of Stage 3.5. Within the pool, **batch ~4 clusters per
+Task** instead of one Task per cluster: a 15-cluster pool is 4 batches × 3 roles = 12
+Tasks, not 45.
+
+```bash
+BATCHES=$(echo "$POOL" | jq -c --argjson k 4 '[range(0; length; $k) as $i | .[$i:$i+$k]]')
+echo "$BATCHES" | jq -c '.[]'   # one batch per line, e.g. ["c14","c01","c06","c09"]
+```
+
+Each Task receives `slug` + **one batch** (an array of 1–4 `cluster_id`s), for one
+role. Nothing else; they read disk. The agent loops the same per-cluster procedure
+once per id in its batch — the mechanics are unchanged, only the delegation shape is:
+
+- **`economist`** → fills `wtp` per cluster (§3.4: `existing_spend`, `workaround_cost`,
+  `buyer_class`, `budget_line`, `read`).
+- **`skeptic`** → fills `skeptic` per cluster (§3.5: `failed_attempts`, `churn_testimony`,
   `structural_blockers`, `steelman`, `under_researched`). **Mandatory. Never skipped for
-  time budget or for "obviously real" pain.**
-- **`historian`** → fills `retro_trend` (§3.6, delegating to `skills/retro-trends`).
+  time budget or for "obviously real" pain, for any cluster in the batch.**
+- **`historian`** → fills `retro_trend` per cluster (§3.6, delegating to
+  `skills/retro-trends`).
 
-**The historian is the slow one, and it is slow on purpose.** `gh_history.py` paces itself
-at ~6.5s/request against GitHub's unauthenticated 10 req/min ceiling; two terms over five
-years is ~80s, three terms ~2 minutes. Expect the minutes and do not kill it. That ceiling
-is **per IP, not per process** — N parallel historians hitting GitHub multiply the rate and
-403 each other into a `coverage: none` series that then reads as "no repos accumulating,"
-which is the underserved signal inverted into a fabrication. So: **cap concurrent
-historians at 2**, and let the economists and skeptics for the remaining clusters fill the
-wave. Never lower `--pace`, never add a token.
+**The historian is the slow one, and it is slow on purpose — batching makes each Task
+slower, not faster.** `gh_history.py` paces itself at ~6.5s/request against GitHub's
+unauthenticated 10 req/min ceiling; two terms over five years is ~80s per cluster, so a
+4-cluster historian batch is several minutes of sequential-within-the-Task work. Expect
+it and do not kill it. GitHub's ceiling is **per IP, not per process** — concurrent
+historian Tasks hitting GitHub at the same time multiply the rate and 403 each other
+into a `coverage: none` series that then reads as "no repos accumulating," which is the
+underserved signal inverted into a fabrication. So: **cap concurrent historian Tasks
+(batches) at 2**, same rule as before, just now scoped to batches instead of individual
+clusters. `npm_history.py` has no comparable ceiling, so it does not add to this
+constraint. Never lower `--pace`, never add a token.
 
-Add one line to each of the three Task prompts:
+Add one line to each Task prompt, generalized for a batch:
 
-> "Write your panel fragment to disk **before** merging it into the card
-> (`cards/.staging/<cid>.wtp.json` / `cards/.panels/<cid>.skeptic.json` /
-> `trends/<cid>-retro_trend.json`). Patch the single key with jq; never `Write` the whole
-> card. If your merge races another agent, the fragment on disk is authoritative."
+> "For **each** `cluster_id` in your batch, write your panel fragment to disk
+> **before** merging it into that cluster's card (`cards/.staging/<cid>.wtp.json` /
+> `cards/.panels/<cid>.skeptic.json` / `trends/<cid>-retro_trend.json`). Patch the
+> single key with jq; never `Write` the whole card. Keep each cluster's evidence and
+> conclusions isolated — do not let one cluster's WTP/skeptic/trend findings reference
+> or bleed into another's, even when they look similar. If your merge races another
+> agent, the fragment on disk is authoritative."
 
 ### Stage 4b — reconcile (you, after the wave)
 
-Three agents read-modify-write one card file. jq-patch races are rare but real, and a lost
-update looks exactly like an agent that silently skipped its stage. Check, then repair
-from the fragments — do not re-run an agent whose fragment is already on disk:
+Three agents read-modify-write one card file, across a batch of clusters each. jq-patch
+races are rare but real, and a lost update looks exactly like an agent that silently
+skipped its stage. Check, then repair from the fragments — do not re-run an agent whose
+fragment is already on disk. **Exclude capped cards**: they are missing these panels by
+design (Stage 3.5), not by accident, and re-running one wastes exactly the budget the
+cap exists to save.
 
 ```bash
-# name the missing panel, per passing card, in one pass. No output = the wave landed clean.
-jq -s -r '.[] | select(.inventory_gate.verdict == "pass")
+# name the missing panel, per pool card, in one pass. No output = the wave landed clean.
+jq -s -r '.[] | select(.inventory_gate.verdict == "pass") | select(.analysis_capped | not)
   | . as $c
   | [ (if $c.wtp then empty else "wtp" end),
       (if $c.skeptic.steelman then empty else "skeptic" end),
@@ -364,8 +433,9 @@ jq -s -r '.[] | select(.inventory_gate.verdict == "pass")
 
 For each missing panel, re-merge from its fragment path (`cards/.staging/<cid>.wtp.json`,
 `cards/.panels/<cid>.skeptic.json`, `trends/<cid>-retro_trend.json`); if the fragment is
-absent too, re-run that one agent for that one cluster. Re-running all three is wasteful
-and will re-spend the GitHub rate limit.
+absent too, re-run that one agent for that one cluster (not its whole batch, and not the
+other two roles). Re-running more than the missing panel is wasteful and will re-spend
+the GitHub rate limit.
 
 **Gate out:** the command above prints nothing. That single slurped pass *is* the gate —
 a per-file `jq -e` loop is only correct if you genuinely iterate, and a `jq -e` over the
@@ -404,12 +474,13 @@ number and its own place in the sort.
 until all of `frequency`, `intensity`, `quadrant`, `wtp`, `skeptic`, `retro_trend`,
 `saturation`, `inventory_gate` are **present** (a panel with no evidence is `null` *with a
 note*, not omitted — an omitted panel reads as "not applicable" when it means "we didn't
-look"). Gate-excluded cards are exempt: they legitimately carry `null` analysis panels and
-appear only in the "excluded at the gate" section below.
+look"). Gate-excluded cards and **capped cards** (`analysis_capped` present, Stage 3.5) are
+both exempt: they legitimately carry `null` analysis panels — for two different reasons —
+and appear only in their own sections below, never silently in the ranked list.
 
 ```bash
 # prints the cluster_ids that are NOT renderable; [] means the gate holds
-jq -s -c '[.[] | select(.inventory_gate.verdict=="pass")
+jq -s -c '[.[] | select(.inventory_gate.verdict=="pass") | select(.analysis_capped | not)
   | select((.frequency and .intensity and .quadrant and .wtp and .skeptic
             and .retro_trend and has("saturation")) | not) | .cluster_id]' $R/cards/*.json
 ```
@@ -441,7 +512,7 @@ Default (CONTRACTS §4): `intensity.score` desc → `wtp.read` desc (high > medi
 ```bash
 jq -s -r '
   def wrank: {"high":3,"medium":2,"low":1}[.wtp.read // ""] // 0;
-  map(select(.inventory_gate.verdict == "pass"))
+  map(select(.inventory_gate.verdict == "pass") | select(.analysis_capped | not))
   | sort_by([ (0 - (.intensity.score // 0)), (0 - wrank), (.saturation.competitor_count // 999999) ])
   | .[] | [.cluster_id, .intensity.score, .wtp.read,
            (.saturation.competitor_count // "unknown"), .skeptic.under_researched] | @tsv
@@ -457,8 +528,8 @@ A/B/C tiers.
 ### Header, before any card (§3.8)
 
 1. The active sort key, verbatim.
-2. Counts: clusters found / cards written / excluded at the inventory gate / flagged
-   UNDER-RESEARCHED / unclustered evidence items.
+2. Counts: clusters found / cards written / excluded at the inventory gate / capped
+   before analysis (Stage 3.5) / flagged UNDER-RESEARCHED / unclustered evidence items.
 3. Frequency thresholds actually used, if §3.3's defaults were scaled for corpus size.
 4. One-line source health, e.g.
    `sources ok: reddit(script), hn, pypi · degraded: dialog(401) · failed: google-trends(timeout) · skipped: npm(non-technical buyer)`.
@@ -471,6 +542,19 @@ Apply `--pain high` (`intensity.score >= 4`) and `--wtp high` (`buyer_class ==
 Then a short **"excluded at the gate"** section: each excluded cluster, one line, with its
 `inventory_gate.flags` reason. Visible, unranked, not silently deleted.
 
+Then, if any card carries `analysis_capped`, a short **"not deep-analyzed (cost cap)"**
+section: one line per capped cluster —
+
+```bash
+jq -s -r '[.[] | select(.analysis_capped)] | sort_by(.analysis_capped.rank)[]
+  | "\(.cluster_id)  rank \(.analysis_capped.rank)/\(.analysis_capped.cap)  intensity \(.intensity.score)  cluster_size \(.frequency.cluster_size)  \(.canonical_pain)"
+' $R/cards/*.json
+```
+
+Visible, unranked, not silently deleted — same rule as the gate-excluded section,
+different reason. Do not editorialize about whether a capped cluster "looks promising";
+present the numbers and move on, same as everywhere else in this render.
+
 **If `--cards-only`, stop here** and go to "How to end."
 
 ---
@@ -479,8 +563,11 @@ Then a short **"excluded at the gate"** section: each excluded cluster, one line
 
 Select the top N (`flags.top`, default 5) from the printed sort, **skipping cards with
 `skeptic.under_researched: true` (§3.5) and any card that failed the inventory gate.**
-Say which cards you skipped and why — a silently shortened list is indistinguishable from
-a thin run. If fewer than N survive, say that too.
+Capped cards (Stage 3.5) are not in the printed sort to begin with — this is why the pool
+is `3 × flags.top`, not `flags.top`, leaving headroom for skips without falling back to
+an unanalyzed card. Say which cards you skipped and why — a silently shortened list is
+indistinguishable from a thin run. If fewer than N survive, say that too, including
+whether the pool itself ran dry.
 
 Per card, **four Tasks in strict sequence** — each link consumes the previous one's file:
 
@@ -568,16 +655,19 @@ run that looks finished.
 Every check below is a **slurped** `jq -s` over the whole card set and prints the
 `cluster_id`s that fail; `[]` means the stage is satisfied. `PASS` is shorthand for
 `select(.inventory_gate.verdict == "pass")` — excluded cards are exempt from every
-panel check (§3.7).
+panel check (§3.7). `PASS_ANALYZED` adds `| select(.analysis_capped | not)` — capped
+cards (Stage 3.5) are exempt from every Stage 4 panel check the same way, for a
+different reason.
 
 | Restart at | Check (prints offenders; `[]` = satisfied) |
 |---|---|
 | Stage 1 | `jq -e '.matrix\|length>=6 and length<=12' $R/inputs.json` (single file, `-e` is safe here) |
 | Stage 2 | `wc -l $R/evidence/*.jsonl` ≥40 total, `source_health.json` has one entry per attempted source |
 | Stage 3 | `jq -e '.clusters\|length>0' $R/clusters.json` (single file) |
+| Stage 3.5 | Stateless — a pure function of `frequency`/`intensity`/`inventory_gate`, which never change after Stage 3. Safe to always re-run; re-running does not change which cards are capped unless the cards themselves changed |
 | Stage 4 | `jq -s -c '[.[]\|PASS\|select((.frequency and .intensity)\|not)\|.cluster_id]' $R/cards/*.json` |
-| Stage 4 (per agent) | the Stage 4b `MISSING PANEL:` command above — it names which of `wtp` / `skeptic` / `retro_trend` is absent, per card. Re-run only the missing one |
-| Stage 5 | `jq -s -c '[.[]\|PASS\|select(has("saturation")\|not)\|.cluster_id]' $R/cards/*.json` |
+| Stage 4 (per agent) | the Stage 4b `MISSING PANEL:` command above — it names which of `wtp` / `skeptic` / `retro_trend` is absent, per **pool** card (capped cards excluded). Re-run only the missing one |
+| Stage 5 | `jq -s -c '[.[]\|PASS\|select(has("saturation")\|not)\|.cluster_id]' $R/cards/*.json` (all pool **and** capped cards get `saturation` — it's a cheap join, not gated by the cap) |
 | Stage 6 | `jq -s -c '[.[]\|select(.inventory_gate.verdict==null)\|.cluster_id]' $R/cards/*.json`, then `$R/opportunity-cards.md` exists |
 | Stage 7 | `$R/wedges/<cid>.json` → `$R/shapes/<cid>.json` → `.agents/product-marketing.md` → `distribution_complexity != null` |
 
@@ -606,3 +696,7 @@ idempotent; re-running the historian re-spends GitHub rate limit, so check the f
 | Analysis inline | Orchestrator reads evidence and picks a winner | Every judgment belongs to a subagent or a skill |
 | Context bloat | Scout manifests pasted with 400 evidence items | Manifests only; read artifacts with `jq` on demand |
 | Ending with a menu | "Would you like me to diligence c01?" | Present, then stop. Ask nothing. |
+| Un-capped Stage 4 | 14 gate-passing clusters × 3 roles = 42 Tasks for a 5-card output | Stage 3.5 caps the analysis pool at `3 × flags.top` (min 9) before Stage 4 fans out |
+| Capped card "repaired" | Re-running WTP on a card that was deliberately never analyzed | Stage 4b's `MISSING PANEL` check and Stage 6's render gate both exclude `analysis_capped` cards |
+| Capped card leaks into the ranked sort | A card with `wtp: null` appears mid-list because the sort query forgot to filter it | Stage 6's sort query filters `select(.analysis_capped\|not)`, same as `inventory_gate.verdict` |
+| One Task per cluster in Stage 4 | 15-cluster pool becomes 45 Tasks instead of ~12 | Batch ~4 cluster_ids per Task per role (Stage 4); the agent loops its own per-cluster procedure internally |

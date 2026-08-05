@@ -248,6 +248,35 @@ Rules: these are **additive only** — a consumer must work when they are
 absent, and no consumer may depend on one. They carry explanation, never data
 another field already holds, and never a score.
 
+### Analysis cap
+
+`analysis_capped` — optional top-level key, `{"rank": <int>, "cap": <int>}`.
+Present **only** on a card that passed the inventory gate but was not selected
+for the expensive Stage 3.4-3.6 analysis (`wtp`, `skeptic`, `retro_trend`)
+because the run's analysis-pool cap was reached — see
+`skills/prospect-methodology/SKILL.md` §3.3b for how the pool and the cap
+value are computed. Absent on every other card, including gate-excluded ones
+(which use `inventory_gate.verdict == "exclude"` instead — a different
+reason for the same three panels staying `null`).
+
+- `rank` — this card's 1-indexed position among gate-passing clusters, sorted
+  by `intensity.score` desc then `frequency.cluster_size` desc (both already
+  computed in §3, free to rank by). `cap` — the cap value used for this run,
+  so a reader can see how close the card came to the cutoff.
+- When `analysis_capped` is present, `wtp`, `skeptic`, and `retro_trend` are
+  `null` **legitimately and permanently for this run** — not a lost panel
+  update. The Stage 4b reconcile check and the Stage 6 renderable-card
+  predicate both treat `analysis_capped` cards the same way they treat
+  `inventory_gate.verdict == "exclude"` cards: exempt from repair, exempt
+  from the ranked list, listed instead in their own visible section.
+- `saturation` may still be populated on a capped card — Stage 5 is a
+  mechanical join against data the scout already staged, not a research call,
+  so there is no cost reason to skip it.
+- A capped card is not a verdict on the idea. It means the run's cost budget
+  was spent on higher-ranked candidates first; a card can be capped this run
+  and analyzed on a re-run with a smaller matrix, a higher `--top`, or a
+  wider cap.
+
 ---
 
 ## 5. `wedges/<cluster_id>.json` — voltage permutations

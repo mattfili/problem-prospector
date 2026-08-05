@@ -63,6 +63,10 @@ CONTRACTS.md wins and this file is the bug.
    capture would destroy the frequency baseline the whole pipeline depends on.
 7. **Paid competitors are positive evidence.** See §3.4. This is counterintuitive
    and agents get it backwards constantly.
+8. **Deep analysis (§3.4–§3.6) is capped, capture is not.** Every gate-passing
+   cluster still gets a card; only the top `3 × flags.top` by intensity/frequency
+   get the expensive WTP/skeptic/trend work (§3.3b). This is a cost gate on
+   analysis *depth*, not a capture filter — decision 6 above is untouched.
 
 ---
 
@@ -81,9 +85,9 @@ destructively — evidence JSONL is append-only and deduped by `id`.
 | 3.2 | Cluster | ≥1 `evidence/*.jsonl` with ≥40 total lines, **and** `source_health.json` has one entry per attempted source | `wc -l runs/<slug>/evidence/*.jsonl` |
 | 3.3 | Freq/intensity | `clusters.json` exists with a non-empty `clusters` array | `jq -e '.clusters\|length>0' runs/<slug>/clusters.json` |
 | 3.4 | WTP | every **passing** card has `frequency` and `intensity` | `P` with `select((.frequency and .intensity)\|not)` |
-| 3.5 | Skeptic | every passing card has `wtp` | `P` with `select(.wtp\|not)` |
-| 3.6 | Retro-trend | every passing card has `skeptic` (incl. `steelman`, `under_researched`) | `P` with `select(.skeptic.steelman\|not)` |
-| 3.7 | Inventory gate | every passing card has `retro_trend` | `P` with `select(.retro_trend\|not)` |
+| 3.5 | Skeptic | every card **in the analysis pool** (§3.3b) has `wtp` | `P_analyzed` with `select(.wtp\|not)` |
+| 3.6 | Retro-trend | every card in the analysis pool has `skeptic` (incl. `steelman`, `under_researched`) | `P_analyzed` with `select(.skeptic.steelman\|not)` |
+| 3.7 | Inventory gate | every card in the analysis pool has `retro_trend` | `P_analyzed` with `select(.retro_trend\|not)` |
 | 3.8 | Render | every card has `inventory_gate.verdict` | `jq -s -c '[.[]\|select(.inventory_gate.verdict==null)\|.cluster_id]' runs/<slug>/cards/*.json` |
 | — | Wedge | `opportunity-cards.md` written and top-N selected | see §Continuation |
 
@@ -95,21 +99,36 @@ jq -s -c '[.[] | select(.inventory_gate.verdict=="pass") | <select(...)> | .clus
   runs/<slug>/cards/*.json
 ```
 
-Two things it is doing that a one-liner does not, both of which have teeth:
+`P_analyzed` is `P` with one more filter, dropping capped cards the same way `P`
+already drops gate-excluded ones:
 
-- **It slurps.** `jq -e '<expr>' cards/*.json` takes its exit status from the **last**
+```bash
+jq -s -c '[.[] | select(.inventory_gate.verdict=="pass") | select(.analysis_capped|not) | <select(...)> | .cluster_id]' \
+  runs/<slug>/cards/*.json
+```
+
+Three things these are doing that a one-liner does not, all of which have teeth:
+
+- **They slurp.** `jq -e '<expr>' cards/*.json` takes its exit status from the **last**
   file's output, so eight cards missing a panel followed by one complete card exits 0 and
   the gate waves through exactly the half-analyzed run this table exists to stop. Never
   gate a card *set* with a bare `jq -e` over a glob.
-- **It filters to `pass` first.** A gate-excluded card carries `null` in every analysis
+- **They filter to `pass` first.** A gate-excluded card carries `null` in every analysis
   panel *by design* (§3.7), so an unfiltered check fires a false HALT the moment the
   inventory gate does its job.
+- **`P_analyzed` also filters out capped cards.** A capped card carries `null` in
+  `wtp`/`skeptic`/`retro_trend` *by design* too (§3.3b) — using plain `P` on stages 3.5–3.7
+  would fire a false HALT on every capped card, or worse, prompt an agent to "repair" a
+  card that was never supposed to be analyzed this run.
 
-**Renderable-card predicate.** A card may not appear in `opportunity-cards.md`
-until all of `frequency`, `intensity`, `quadrant`, `wtp`, `skeptic`, `retro_trend`,
-`saturation`, `inventory_gate` are present. A panel with no evidence is written as
-`null` with a note — it is *not* omitted, because an omitted panel reads as "not
-applicable" when it actually means "we didn't look."
+**Renderable-card predicate.** A card may not appear **in the ranked list** in
+`opportunity-cards.md` until all of `frequency`, `intensity`, `quadrant`, `wtp`,
+`skeptic`, `retro_trend`, `saturation`, `inventory_gate` are present. A panel with no
+evidence is written as `null` with a note — it is *not* omitted, because an omitted
+panel reads as "not applicable" when it actually means "we didn't look." Capped cards
+never satisfy this predicate by design (§3.3b) and are not a bug when they don't —
+they appear instead in their own visible section, same treatment as gate-excluded
+cards (§3.8).
 
 **Thin-capture stop.** If after §3.1 total evidence is <40 items, or fewer than
 three attempted sources returned anything, **stop and report** — do not proceed to
@@ -462,6 +481,39 @@ lower-intensity cards from being written to `runs/<slug>/cards/`.
 
 ---
 
+## 3.3b Cap the analysis pool
+
+§3.4–§3.6 are expensive: three subagent Tasks per cluster — WTP proxies, a mandatory
+counter-evidence hunt, and a 3–5 year trend reconstruction against five external
+scripts. Running that on every gate-passing cluster does not scale: a broad,
+un-niched matrix routinely produces a dozen or more surviving clusters, and only
+`flags.top` (default 5) of them will ever reach a wedge. The rest were full-priced
+for zero chance of appearing in the output.
+
+**Rank gate-passing clusters by `intensity.score` desc, then `frequency.cluster_size`
+desc** — both already on disk from §3.3, free to sort by, no extra research. Take the
+top `max(3 × flags.top, 9)` as the **analysis pool**. Every gate-passing cluster still
+gets a card (§3.3's promise holds); only the pool's cards proceed to §3.4–§3.6.
+
+Every gate-passing card **outside** the pool gets one additive key,
+`analysis_capped: {"rank": <n>, "cap": <k>}` (CONTRACTS §4), and stops there —
+`wtp`, `skeptic`, `retro_trend` stay `null`, legitimately and permanently for this
+run. This is a different finding from "we searched and found nothing" (that is what
+`null` inside a *completed* panel means) and a different finding from the inventory
+gate's `exclude` (that is a verdict on the idea). It means *the run's cost budget went
+to higher-ranked candidates first.* A capped card is not a rejected card: it is a
+normal candidate again on a re-run with a wider `--top` or a smaller matrix.
+
+`saturation` (§3.8's rider) still gets joined onto capped cards — it is a mechanical
+lookup against data the scout already staged, not a research call, so there is no
+cost reason to withhold it.
+
+**Cards in the pool are the only ones §3.4–§3.6 below run on.** Read "every passing
+cluster" in those sections as "every cluster in the analysis pool" — the two sets are
+identical only when the cap is not reached.
+
+---
+
 ## 3.4 Gap 3 — Willingness-to-pay proxies (all key-free)
 
 You cannot survey anyone and there is no billing data. Everything here is a proxy
@@ -539,8 +591,8 @@ not to this stage.
 
 ## 3.5 Gap 4 — Counter-evidence (MANDATORY)
 
-For **every** cluster that survives §3.4, the skeptic produces four things, with
-citations. This stage is not optional, not conditional on time budget, and not
+For **every cluster in the analysis pool** (§3.3b), the skeptic produces four things,
+with citations. This stage is not optional, not conditional on time budget, and not
 skippable for "obviously real" pain. Obviously-real pain with no counter-evidence
 search is exactly the profile of every idea that died in month nine.
 
@@ -696,6 +748,14 @@ trace a card back to the matrix cell that found it — including "this only ever
 showed up in one cell," which is itself a finding. Plus `quadrant` and
 `inventory_gate`.
 
+**Capped cards get a section too, same treatment as excluded-at-the-gate ones.**
+A card carrying `analysis_capped` (§3.3b) is not renderable in the ranked list — it
+never got `wtp`/`skeptic`/`retro_trend` — but it is not hidden either: list it in a
+short **"not deep-analyzed (cost cap)"** section, one line each, with
+`canonical_pain`, `intensity.score`, `frequency.cluster_size`, and `analysis_capped`'s
+`rank`/`cap`. Visible, unranked, not silently deleted — the same rule §3.7 states for
+gate-excluded cards, applied to a different reason.
+
 ### Ranking — the transparent sort
 
 Rank by the CONTRACTS §4 Sort contract: **`intensity.score` desc → `wtp.read` desc
@@ -721,7 +781,8 @@ Rank by the CONTRACTS §4 Sort contract: **`intensity.score` desc → `wtp.read`
 
 - Active sort key, verbatim.
 - Counts: clusters found / cards written / excluded at the inventory gate /
-  flagged UNDER-RESEARCHED / unclustered evidence items.
+  capped before analysis (§3.3b) / flagged UNDER-RESEARCHED / unclustered evidence
+  items.
 - Frequency thresholds actually used (see §3.3) if they were scaled.
 - One-line source-health summary (ok / degraded / failed / skipped).
 - Active flags from `inputs.json` (`--pain`, `--wtp`, `--niche`, `--top`) and a note
@@ -755,7 +816,11 @@ default 5):
 Top-N selection: take the first N of the contract sort, **skipping
 `under_researched: true` cards** (§3.5) and cards that failed the inventory gate
 (§3.7). Say which cards you skipped and why — a silently shortened list looks
-identical to a thin run.
+identical to a thin run. Capped cards (§3.3b) are not in the sort to begin with —
+this is exactly why the pool is sized at `3 × flags.top`, not `flags.top`: it leaves
+headroom for skipped cards without needing to fall back to an unanalyzed one. If the
+pool genuinely runs dry before N is reached, say so explicitly rather than silently
+shipping fewer than N.
 
 ---
 
@@ -780,5 +845,7 @@ identical to a thin run.
 | Stitched quotes | `"we lost … thousands … every month"` | Verbatim ≤15 words, single continuous span, `words` counted, linked |
 | Invented precision | `slope_pct_per_year: 4.37` from three sparse buckets | Coverage stated in `note`; table instead of sparkline when coverage is weak |
 | Half-analyzed run | Cards rendered with empty `skeptic` after a crash | Stage-gate table; renderable-card predicate |
+| Un-capped fan-out | 14 gate-passing clusters × 3 roles = 42 Tasks to reach a 5-card output | §3.3b caps the analysis pool at `3 × flags.top`; everything else stays a card with `analysis_capped` |
+| Capped card "repaired" | An agent re-runs WTP on a card that was deliberately never analyzed | `P_analyzed` excludes `analysis_capped` cards from every 3.5–3.7 gate check |
 | Thin run dressed up | Confident cards over 11 evidence items | Thin-capture stop at <40 items or <3 responding sources |
 | Down-ranking instead of gating | "Physical inventory, but interesting — ranked 4th" | `skills/no-inventory-gate` excludes at the gate; failures listed unranked |

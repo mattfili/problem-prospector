@@ -52,18 +52,26 @@ you cite, not from a view you form.
    discriminating power), and at least one inverted or adversarial framing. Tell
    the user the frame in ~6 lines, then keep going — it is not a checkpoint.
 
-2. **Probe `dialog` once, before any capture.** One `ToolSearch` for
-   `mcp__dialog__*`. Expect it absent or 401 — it needs OAuth, and when it is not
-   authenticated the Arctic Shift path carries the run. Probe **once per run**, not
-   once per cell, and carry the answer down.
+2. **Probe `dialog` once, before any capture.** One `ToolSearch` covering **both**
+   spellings — `mcp__plugin_problem-prospector_dialog__*` (installed as a plugin, the
+   normal case) and `mcp__dialog__*` (configured at user or project scope). Expect it
+   absent or 401 until someone authenticates it, in which case Arctic Shift carries the
+   run. Probe **once per run**, not once per cell, and carry the answer down.
 
-   **If `dialog` answers, prefer it for Reddit.** It gives semantic subreddit
-   discovery and full comment trees with citations, which beats the archive — and the
-   archive is the source that throttles. This server cannot call dialog's tools for
+   **If `dialog` answers, prefer it for Reddit.** It gives semantic subreddit discovery
+   and full comment trees with citations, which beats the archive — and the archive is
+   the source whose query endpoint throttles. This server cannot call dialog's tools for
    you, so: call them yourself, then hand each cell's results to
-   **`pain_ingest_records`**, which shapes and validates them and computes the
-   contract `id`. Read dialog's own tool list rather than assuming names; nothing in
-   this repo grants a guessed `mcp__dialog__*` tool, deliberately.
+   **`pain_ingest_records`**, which shapes and validates them and computes the contract
+   `id`.
+
+   Its three tools wrap eleven operations; use `discover_operations` rather than
+   assuming. **`search_subreddit` returns `selftext: null`** — search alone is a
+   title-only capture, which systematically scores intensity 2. Run
+   `search_subreddit` then `fetch_comments` per post, which returns the submission body
+   and the comment tree, and ingest the posts. Dialog's comment objects have no URL and
+   CONTRACTS forbids constructing one, so treat comments as reading for the intensity
+   stage, not as separate evidence records.
 
    If dialog *errors* on a cell, record it with `pain_record_source_decision` and use
    `pain_capture_reddit` for that cell. Do not send an empty batch to

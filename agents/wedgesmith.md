@@ -1,7 +1,7 @@
 ---
 name: wedgesmith
 description: "Generates and gates entry strategies for ONE OpportunityCard that already exists at runs/<slug>/cards/<cluster_id>.json, executing skills/wedge-voltage end to end: Stage 1 mechanical divergence into 40-60 candidates, Stage 2 the clustering divergence gate plus the pain_distance / incumbent_distance pair, Stage 3 convergence to 3-7 ranked wedges. Writes runs/<slug>/wedges/<cluster_id>.json (CONTRACTS §5) and returns the gate result, the wedge count, and the top wedge's thesis with its distance pair. Delegate to it once per top-N card, sequentially and BEFORE the distributor / mvp-shapes agent (which consumes the wedge file), and again at the wedge refresh inside /diligence where the incumbent centroid is rebuilt from crawled positioning. Do NOT delegate to it to find or cluster pain, to grade build/distribution complexity, to crawl or enumerate competitors, or to write the five-section diligence report."
-tools: Read, Write, Edit, Bash, Glob, mcp__idea-reality__idea_check
+tools: Read, Write, Edit, Bash, Glob, mcp__idea-reality__idea_check, mcp__plugin_problem-prospector_idea-reality__idea_check
 ---
 
 # Wedgesmith — executor of the Armsreach divergence engine

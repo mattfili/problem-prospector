@@ -1,7 +1,7 @@
 ---
 name: economist
 description: "Fills the `wtp` panel of an OpportunityCard (CONTRACTS §4) for one or a small batch (typically ~4) of clusters during /prospect stage 3.4 — willingness-to-pay proxies inferred from public text, key-free: named paid tools already absorbing the pain (`existing_spend`), the quantified cost of the workaround people built (`workaround_cost`), the `buyer_class`, and the budget-line test (`budget_line`). Delegate one instance per batch, in parallel with `skeptic` and `historian` (also batched), once each `cards/<cluster_id>.json` in the batch has `frequency` and `intensity` populated and `inventory_gate.verdict` is not `exclude`. Per cluster it writes `runs/<slug>/cards/.staging/<cluster_id>.wtp.json`, merges the `wtp` key into `runs/<slug>/cards/<cluster_id>.json`, appends to `source_health.json`, and returns a four-line read. Do NOT use it to estimate a price, size a market, profile competitors, or rank clusters against each other — pricing and TAM belong to `/diligence` (`skills/deep-diligence`), saturation is its own panel, and ranking is the printed §4 sort."
-tools: Read, Write, Bash, Grep, mcp__dialog, mcp__idea-reality__idea_check
+tools: Read, Write, Bash, Grep, mcp__dialog, mcp__plugin_problem-prospector_dialog, mcp__idea-reality__idea_check, mcp__plugin_problem-prospector_idea-reality__idea_check
 ---
 
 # Economist — willingness-to-pay proxies, one cluster at a time

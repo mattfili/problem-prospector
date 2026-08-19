@@ -1,7 +1,7 @@
 ---
 name: scout
 description: Captures raw public complaint evidence for exactly one matrix cell of a /prospect run, with zero interpretation. Delegate one scout per cell in runs/<slug>/inputs.json (batched 4-6 concurrent, and optionally one scout per source within a cell) immediately after the frame stage writes inputs.json. It runs the cell's queries against Reddit (dialog MCP if present, else scripts/reddit_search.py), the relevant trend-pulse sources (else scripts/trends_cli.py), and a first saturation read (idea-reality MCP else scripts/reality_cli.py), then writes CONTRACTS §2 JSONL to runs/<slug>/evidence/.staging/<source>-<cell_id>.jsonl plus a staged source-health file for the orchestrator to merge. Returns a manifest only — counts per source, staged paths, health entries, zero-result queries — never analysis, rankings, or "the strongest pain here is". Use it for capture only; it does not cluster, score, dedup near-duplicates, or judge intensity.
-tools: Read, Write, Bash, ToolSearch, mcp__dialog, mcp__idea-reality__idea_check, mcp__trend-pulse__search_trends, mcp__trend-pulse__get_trending, mcp__trend-pulse__list_sources
+tools: Read, Write, Bash, ToolSearch, mcp__dialog, mcp__plugin_problem-prospector_dialog, mcp__idea-reality__idea_check, mcp__plugin_problem-prospector_idea-reality__idea_check, mcp__trend-pulse__search_trends, mcp__plugin_problem-prospector_trend-pulse__search_trends, mcp__trend-pulse__get_trending, mcp__plugin_problem-prospector_trend-pulse__get_trending, mcp__trend-pulse__list_sources, mcp__plugin_problem-prospector_trend-pulse__list_sources
 ---
 
 # Scout — signal capture, zero interpretation
@@ -88,10 +88,35 @@ limit.
 ## Source 1 — Reddit (always, no relevance test)
 
 **Primary, opportunistic:** the `dialog` MCP (semantic subreddit discovery + post and
-comment pulls, citations built in). Probe it **exactly once** — check whether any
-`mcp__dialog__*` tool is present; one `ToolSearch` query at most. Expect it to be
-absent or to 401: it needs OAuth (CONTRACTS appendix). Do not retry in a loop, do not
-ask the user for credentials, do not narrate the failure.
+comment pulls, citations built in). Probe it **exactly once**; one `ToolSearch` query at
+most. Expect it to be absent or to 401 until someone authenticates it (CONTRACTS
+appendix). Do not retry in a loop, do not ask the user for credentials, do not narrate
+the failure.
+
+**Two spellings, and you must try both.** Installed as a plugin the tools are named
+`mcp__plugin_problem-prospector_dialog__*`; configured at user or project scope they are
+`mcp__dialog__*`. The plugin form is the normal case. Probing only the bare form is how
+this server sat unreachable while every run silently used the script fallback and looked
+fine.
+
+**It exposes three tools wrapping eleven operations** (observed live 2026-08-19):
+`discover_operations`, `get_operation_schema`, `execute_operation`. The operations you
+want are `discover_subreddits` (semantic, for finding communities the cell's frame did
+not name), `search_subreddit`, `fetch_multiple`, and `fetch_comments`.
+
+**`search_subreddit` returns `selftext: null`.** Search gives you the title, real score,
+`num_comments` and a real permalink — and no body. So search alone is a title-only
+capture, which systematically produces intensity 2 and looks like a finding, exactly as
+with `--comments`. Follow dialog's own targeted-search workflow: `search_subreddit`, then
+`fetch_comments` per post, which returns the submission's `selftext` **and** the comment
+tree. Then hand the records to `pain_ingest_records` (pain-search MCP) if you are using
+the tool surface, which computes contract ids and validates shape.
+
+Caveat to raise rather than paper over: dialog's comment objects carry `id`, `body`,
+`author`, `score` and `depth` but **no URL**, and CONTRACTS §2 forbids constructing one.
+Until that is settled (see the CONTRACTS appendix note), ingest dialog *posts* as
+evidence and use its comments as reading for the intensity stage rather than as separate
+evidence records.
 
 **Guaranteed fallback**, on absence, 401, timeout, or any error:
 

@@ -492,7 +492,7 @@ before assuming a source works.
 |---|---|---|
 | `idea-reality` (uvx) | **works, key-free** | server `idea-reality-mcp 3.4.5`, 1 tool: `idea_check` |
 | `trend-pulse` (uvx) | **works, key-free — requires a pin** | its `[mcp]` extra does not constrain `mcp`, and `mcp 2.0.0` removed `mcp.server.fastmcp`, so the server crashes on import. `.mcp.json` pins `--with "mcp<2"`, which yields `trend-pulse 1.29.0` and 29 tools. If it ever breaks again, this is the first thing to check. |
-| `dialog` (hosted HTTP) | **requires OAuth** | returns `401 invalid_token` unauthenticated, but advertises RFC 7591 dynamic client registration via Descope (verified 2026-08-18), so the OAuth completes in-client with nothing pasted — `/mcp`, authenticate once. `mcp.dialog.tools/mcp` is an alias of the same deployment. Because an MCP server cannot call another server's tools, a dialog capture runs client-side and is staged through `pain_ingest_records`. Opportunistic primary only; `scripts/reddit_search.py` is the guaranteed path. Its tool names were never observed (the 401 precedes the tool list), so **no agent's `tools:` frontmatter grants a `mcp__dialog__*` tool** — granting a guessed name is worse than not granting one. Consequence to expect, and to not mistake for a bug: the `dialog` probe resolves `unavailable` in every agent, every run, and the run proceeds on Arctic Shift. If the tool names are ever confirmed, add them to `scout` / `skeptic` / `economist` frontmatter; until then the guaranteed path is the only path. |
+| `dialog` (hosted HTTP) | **works, OAuth completed 2026-08-19** | Descope OAuth with RFC 7591 dynamic client registration, so the flow completes in-client with nothing pasted. `mcp.dialog.tools/mcp` and `reddit-research-mcp.fastmcp.app/mcp` are aliases of one deployment. **Tool names are now observed, so the guessing ban is lifted:** three tools — `discover_operations`, `get_operation_schema`, `execute_operation` — wrapping eleven operations (`discover_subreddits`, `search_subreddit`, `fetch_posts`, `fetch_multiple`, `fetch_comments`, plus six feed operations). See the two riders below. |
 | Arctic Shift | works, key-free | `>=1.2s`/req; no global subreddit search. See the two query caveats below. A `422 Timeout. Maybe slow down a bit` now walks the limit ladder `100 → 50 → 25 → 10` with doubling backoff, widening the host interval at each rung (`reddit_search.py:arctic_get_with_recovery`, guarded by `tests/test_arctic_backoff.py`). `403`/`429` remain circuit-broken on sight and are never retried. |
 | `reddit-mcp-buddy` (npx) | **rejected as a key-free path** | Probed 2026-08-18 with credentials scrubbed: Reddit `.json` 403s for every subreddit, so anonymous mode is always the RSS fallback — `engagement` fields all `null`, body truncated at 500 chars, `search_reddit` and `get_post_details` both 403, 10 req/min. No search and no comments makes it unusable for §3.1 capture and caps §3.3 intensity at 1–2. Capable *with* Reddit app credentials, which is a different guarantee. |
 | pullpush (last resort) | works, key-free | `>=4s`/req, stop on first 429. **Has no equivalent of Arctic Shift's `query`** — see below. |
@@ -504,6 +504,44 @@ before assuming a source works.
 **macOS note for anyone writing tests here:** `timeout(1)` does not exist on
 stock macOS. Use a language-level timeout instead — a shell probe wrapped in
 `timeout` silently becomes a no-op and looks like a dead server.
+
+### The MCP tool-namespace rider (read before granting a tool)
+
+Installed as a plugin, this bundle's servers are namespaced
+`mcp__plugin_problem-prospector_<server>__<tool>`. Configured at user or project scope
+they are `mcp__<server>__<tool>`. **Both spellings must be granted and probed**, and the
+plugin form is the normal case.
+
+This was a live defect, found 2026-08-19 the first time the bundle was actually installed
+as a plugin rather than run from a checkout: every agent's `tools:` frontmatter granted
+only the bare form, so **no agent could reach any of the four MCP servers**. Nothing broke
+and nothing was logged, because every capability degraded to its guaranteed script and the
+runs completed — the key-free guarantee is exactly what hid it. The opportunistic primary
+had never once fired.
+
+Two consequences: a probe that checks only `mcp__<server>__*` reports every server
+unavailable while they are loaded, and a `tools:` list is not evidence that an agent can
+reach a server. Granting a name that does not exist is harmless, so grant both.
+
+### The dialog capture rider
+
+Two properties that change how a caller must use it, both observed live:
+
+- **`search_subreddit` returns `selftext: null`.** Search gives title, score,
+  `num_comments` and a real permalink, and no body. Search alone is therefore a
+  title-only capture — the failure §3.3 already warns about, which produces intensity 2
+  and looks like a finding. Dialog's own targeted-search workflow is
+  `search_subreddit` → `fetch_comments`, and `fetch_comments` returns the submission's
+  `selftext` **plus** the comment tree.
+- **Dialog's comment objects carry no URL.** They hold `id`, `body`, `author`, `score`
+  and `depth`, but no permalink, while §2 requires a real resolvable URL and cross-cutting
+  rule 1 forbids constructing one. A comment permalink is deterministic
+  (`<post_permalink><comment_id>/`) rather than invented, so an exception is arguable —
+  but it is an exception to a rule with a stated reason and is **not taken here**.
+  Until it is ruled: ingest dialog *posts* as evidence, and use its comments as reading
+  for the intensity stage rather than as separate evidence records. This is the one
+  capability where `reddit_search.py` (Arctic Shift, whose comments carry real
+  permalinks) is strictly better than dialog.
 
 ### Arctic Shift query semantics — two caveats that bite
 

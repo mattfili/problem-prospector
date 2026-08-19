@@ -240,9 +240,15 @@ semantic search across 20k+ subreddits with citations. When it doesn't, the
 Arctic Shift path carries the run with no credentials at all. The key-free
 guarantee rests on the fallback, not on `dialog`.
 
-Verified 2026-08-18: the endpoint advertises RFC 7591 dynamic client registration
-through Descope, so the flow completes in-client with nothing pasted — run `/mcp`
-and authenticate once. `mcp.dialog.tools/mcp` and `reddit-research-mcp.fastmcp.app/mcp`
+**Authenticated 2026-08-19.** The endpoint advertises RFC 7591 dynamic client
+registration through Descope, so the flow completes in-client with nothing pasted —
+run `/mcp` and authenticate once. It exposes three tools wrapping eleven operations
+(`discover_subreddits`, `search_subreddit`, `fetch_multiple`, `fetch_comments`, plus
+feed management). Two properties govern how you use it, both in the CONTRACTS
+appendix: `search_subreddit` returns `selftext: null`, so search alone is a title-only
+capture — pair it with `fetch_comments`, which returns the body and the comment tree —
+and dialog's comments carry no URL, so posts are ingested as evidence while comments
+are read for the intensity stage. `mcp.dialog.tools/mcp` and `reddit-research-mcp.fastmcp.app/mcp`
 are aliases of the same deployment (identical Descope app id), so the configured URL
 is not the reason it 401s; it 401s because nobody has authenticated it.
 

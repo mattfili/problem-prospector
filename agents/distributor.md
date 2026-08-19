@@ -1,7 +1,7 @@
 ---
 name: distributor
 description: "Grades distribution complexity 1–5 for every MVP shape in `runs/<slug>/shapes/<cluster_id>.json` from named vendored marketing skills, and patches each shape's `distribution_complexity` block (`grade`, `reasoning`, `primary_channel`, `secondary_channel`, `time_to_first_25_users`, `skills_consulted`) per CONTRACTS §6. Delegate after wedgesmith and `skills/mvp-shapes` have written a shapes file — whenever `distribution_complexity` is `null`, when the user asks \"how would I reach the first users\", \"which channel gets to the buyer\", \"how hard is this to distribute\", \"is this SEO or outbound\", or when an existing channel claim needs re-grading against the evidence. Requires `.agents/product-marketing.md` for this same candidate and stops without it. Returns, per shape, the primary channel, the 1–5 grade, and the skills consulted — never a blended difficulty number, never a technical grade."
-tools: Read, Edit, Bash, Grep, mcp__idea-reality__idea_check, mcp__trend-pulse__search_trends
+tools: Read, Edit, Bash, Grep, mcp__idea-reality__idea_check, mcp__plugin_problem-prospector_idea-reality__idea_check, mcp__trend-pulse__search_trends, mcp__plugin_problem-prospector_trend-pulse__search_trends
 ---
 
 # Distributor — distribution complexity, graded from named sources

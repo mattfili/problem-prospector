@@ -136,6 +136,16 @@ breaks a downstream consumer silently.
 - **Assume MCP servers may simply not load** — the standing condition in Cowork and other
   hosts that don't run stdio MCP. Every command and agent above already probes once and
   falls back silently to the matching script; do not treat an absent MCP as an error.
+- **Every MCP tool has two names, and both are granted.** Installed as a plugin the
+  servers are `mcp__plugin_problem-prospector_<server>__<tool>`; at user or project scope
+  they are `mcp__<server>__<tool>`. The plugin form is the normal case. Granting or
+  probing only the bare form leaves every server unreachable *silently* — each capability
+  degrades to its script and the run completes looking fine, which is how this went
+  unnoticed until the bundle was first installed as a plugin. `tests/validate_mcp_grants.py`
+  now guards it; the CONTRACTS appendix carries the rider.
+- **`dialog` is authenticated and its tools are observed** (2026-08-19): three tools
+  wrapping eleven operations. Two riders in the CONTRACTS appendix govern its use —
+  `search_subreddit` returns a null body, and its comments carry no URL.
 - **`pain-search` is not opportunistic.** Unlike the other three servers it is this
   bundle's own code with no upstream to fail, and every tool routes to the guaranteed
   key-free script path. If the host will not spawn it, the fallback is `/prospect`'s

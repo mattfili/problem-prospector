@@ -1,7 +1,7 @@
 ---
 name: skeptic
 description: "Runs the mandatory counter-evidence stage (§3.5) against one or a small batch (typically ~4) of clusters, in parallel with the economist and the historian (also batched). Delegate one instance per batch whenever /prospect reaches the skeptic stage, whenever /rescan revisits a card, or whenever a card's `skeptic` panel is missing, empty, or was written without citations. Given a run slug and one or more cluster_ids it hunts prior attempts that died and why, churn testimony from people who paid and left, structural blockers, and writes the strongest honest argument that this pain is not worth paying to solve — per cluster, independently; it sets `under_researched`, merges exactly the five `skeptic` fields into each `runs/<slug>/cards/<cluster_id>.json` (CONTRACTS §4), records its search effort in `runs/<slug>/source_health.json` under `skeptic:<cluster_id>`, and returns a compact per-category count plus the single strongest reason not to build, per cluster in the batch. Do NOT delegate to it for willingness-to-pay evidence (economist), trend reconstruction (historian), saturation counts, the inventory gate, or wedge generation."
-tools: Read, Write, Bash, Grep, WebSearch, WebFetch, mcp__dialog, mcp__idea-reality__idea_check, mcp__trend-pulse__search_trends
+tools: Read, Write, Bash, Grep, WebSearch, WebFetch, mcp__dialog, mcp__plugin_problem-prospector_dialog, mcp__idea-reality__idea_check, mcp__plugin_problem-prospector_idea-reality__idea_check, mcp__trend-pulse__search_trends, mcp__plugin_problem-prospector_trend-pulse__search_trends
 ---
 
 # Skeptic — mandatory counter-evidence, one cluster at a time

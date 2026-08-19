@@ -136,7 +136,10 @@ Delegate one short probe:
 
 > `Task(subagent_type: "general-purpose")` — "Probe MCP availability for a
 > problem-prospector run. Check whether tools matching `mcp__dialog__*`,
-> `mcp__trend-pulse__*`, `mcp__idea-reality__*` exist (one `ToolSearch` query total). For
+> `mcp__trend-pulse__*`, `mcp__idea-reality__*` **or** their installed-plugin spellings
+> `mcp__plugin_problem-prospector_{dialog,trend-pulse,idea-reality}__*` exist (one
+> `ToolSearch` query total). The plugin spelling is the normal case — probing only the
+> bare form reports every server unavailable while it is in fact loaded. For
 > each server that is present, make exactly one cheapest call to confirm it answers
 > (`list_sources` for trend-pulse; a one-line `idea_check` for idea-reality; any dialog
 > tool). Do not retry, do not ask for credentials, do not narrate. Return exactly three

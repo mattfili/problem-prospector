@@ -213,6 +213,25 @@ if python3 tests/validate_enums.py; then ok "no CONTRACTS enum drift"
 else bad "no CONTRACTS enum drift" "see output above"; fi
 
 # ---------------------------------------------------------------------------
+section "mcp grant namespace"
+# ---------------------------------------------------------------------------
+# Installed as a plugin the servers are namespaced
+# mcp__plugin_problem-prospector_<server>__<tool>; at user/project scope they are
+# mcp__<server>__<tool>. Granting only one spelling left every agent unable to
+# reach any server, with no error and no log line, because each capability
+# degraded to its script. Only a mechanical check catches that.
+if [ -f tests/validate_mcp_grants.py ]; then
+  if out="$(python3 tests/validate_mcp_grants.py 2>&1)"; then
+    ok "agents grant both MCP tool-name spellings"
+  else
+    bad "agents grant both MCP tool-name spellings" \
+        "$(echo "$out" | grep FAIL | head -3 | tr '\n' ' ')"
+  fi
+else
+  skip "mcp grant namespace"
+fi
+
+# ---------------------------------------------------------------------------
 section "dropped-query fallback regression"
 # ---------------------------------------------------------------------------
 # Stubs the HTTP layer to force an Arctic Shift outage, because a live one

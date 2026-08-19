@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Single-plugin marketplace for problem-prospector.",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "plugins": [
     {
       "name": "problem-prospector",
       "source": "./",
       "description": "Evidence-first discovery of business-shaped problems: capture signal from key-free public sources, cluster it, separate intensity from frequency, stress-test willingness-to-pay against mandatory counter-evidence, then wedge survivors into MVP shapes with transparent subscores.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "author": {
         "name": "Matt Fili"
       },

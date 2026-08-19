@@ -16,7 +16,17 @@
     },
     "idea-reality": {
       "command": "uvx",
-      "args": ["idea-reality-mcp"]
+      "args": [
+        "idea-reality-mcp"
+      ]
+    },
+    "pain-search": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--quiet",
+        "${CLAUDE_PLUGIN_ROOT}/scripts/pain_mcp.py"
+      ]
     }
   }
 }

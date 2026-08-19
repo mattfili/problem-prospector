@@ -649,6 +649,15 @@ move on.
 ## Resuming a crashed or interrupted run
 
 `$R/inputs.json` exists → resume. Walk these in order and restart at the first that fails.
+
+**A `/pain-search` run is exactly this case.** That command drives the `pain-search`
+MCP server through Stages 0b-3 and stops, leaving `inputs.json`, merged evidence,
+`clusters.json`, and one card per cluster with `frequency`, `intensity`, `quadrant`
+and `inventory_gate` filled. Nothing about it is special: the gate table below finds
+Stages 1-3 satisfied and restarts at **Stage 3.5**. Do not re-capture, and do not
+re-cluster — re-clustering would discard scored intensity and change every
+`cluster_id`. Its `pain-clusters.md` is a separate artifact (CONTRACTS §4b) and is
+not an input to anything; Stage 6 still renders `opportunity-cards.md` from the cards.
 A missing precondition **halts with a clear message**; it never produces a half-analyzed
 run that looks finished.
 

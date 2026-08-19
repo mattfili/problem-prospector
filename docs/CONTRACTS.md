@@ -279,6 +279,38 @@ reason for the same three panels staying `null`).
 
 ---
 
+## 4b. `pain-clusters.md` — the pain-search report
+
+The terminal artifact of a `/pain-search` run: §3.3's two axes and nothing else.
+
+**Produced by** `scripts/pain_report.py` (the `pain_report` tool) · **Consumed by**
+a human reader
+
+A pain-search run is a legal **Stage-3-complete** run and not a separate species of
+run. It writes exactly the §1-§4 shapes above, with `wtp`, `skeptic`,
+`retro_trend` and `saturation` `null` on every card and `inventory_gate` plus
+`frequency` — and, on gate-passing clusters, `intensity` and `quadrant` — filled.
+`/prospect "<same inspiration>"` therefore resumes it at Stage 3.5: every gate below
+that line already holds, evidence is append-only, and nothing is re-captured.
+
+Two run-local scratch files, both dot-prefixed so `cards/*.json` never globs them in
+a shell or in `jq` (note that `pathlib.Path.glob` *does* match dotfiles — see
+`pain_stages.card_paths`):
+
+| Path | Holds |
+|---|---|
+| `cards/.calibration.json` | The frequency thresholds actually used, the scale factor, and the run's engagement top decile. Read by the report header; not a contract path. |
+| `evidence/.staging/saturation-<cell_id>.json` | The capture-time saturation read, awaiting Stage 5's join. Already declared by §3.1; a pain-search run simply leaves it staged. |
+
+The report header is not decoration. It carries the active sort key verbatim, the
+counts, the frequency thresholds actually used, one line of source health, and any
+rubric interpretation that changed a number this run (§3.3 contradicts itself in two
+places; `scripts/pain_rubric.py` resolves both and the report discloses when the
+resolution bound). An unstated threshold makes every `read` non-reproducible, and an
+encoded judgment nobody can see is the failure this whole document exists to prevent.
+
+---
+
 ## 5. `wedges/<cluster_id>.json` — voltage permutations
 
 **Produced by** wedgesmith (`skills/wedge-voltage`) · **Consumed by**
@@ -406,7 +438,11 @@ clusters, and slope changes. Requires §1 and §3 from the prior run.
 3. **Every script emits JSON to stdout** and diagnostics to stderr, so it can
    be piped and so an agent can parse it without a wrapper.
 4. **Every script is standalone and key-free** — PEP 723 inline metadata, run
-   via `uv run scripts/<name>.py`. No script reads an API key.
+   via `uv run scripts/<name>.py`. No script reads an API key. The one exception to
+   *standalone* is deliberate: `scripts/pain_mcp.py` is an MCP server whose five
+   stage modules (`pain_stages`, `pain_capture`, `pain_cards`, `pain_intensity`,
+   `pain_report`, over the pure `pain_rubric`) are imports rather than CLIs. They are still
+   key-free and still route every capture through the guaranteed scripts above.
 5. **Graceful degradation is silent to the user but recorded in the run.**
    Each stage appends to `runs/<slug>/source_health.json`:
    `{"source": "dialog", "status": "unavailable", "fallback": "reddit_search.py", "detail": "401"}`.
@@ -456,8 +492,9 @@ before assuming a source works.
 |---|---|---|
 | `idea-reality` (uvx) | **works, key-free** | server `idea-reality-mcp 3.4.5`, 1 tool: `idea_check` |
 | `trend-pulse` (uvx) | **works, key-free — requires a pin** | its `[mcp]` extra does not constrain `mcp`, and `mcp 2.0.0` removed `mcp.server.fastmcp`, so the server crashes on import. `.mcp.json` pins `--with "mcp<2"`, which yields `trend-pulse 1.29.0` and 29 tools. If it ever breaks again, this is the first thing to check. |
-| `dialog` (hosted HTTP) | **requires OAuth** | returns `401 invalid_token` unauthenticated. Opportunistic primary only; `scripts/reddit_search.py` is the guaranteed path. Its tool names were never observed (the 401 precedes the tool list), so **no agent's `tools:` frontmatter grants a `mcp__dialog__*` tool** — granting a guessed name is worse than not granting one. Consequence to expect, and to not mistake for a bug: the `dialog` probe resolves `unavailable` in every agent, every run, and the run proceeds on Arctic Shift. If the tool names are ever confirmed, add them to `scout` / `skeptic` / `economist` frontmatter; until then the guaranteed path is the only path. |
-| Arctic Shift | works, key-free | `>=1.2s`/req; 422 ⇒ retry at `limit=50`; no global subreddit search. See the two query caveats below. |
+| `dialog` (hosted HTTP) | **requires OAuth** | returns `401 invalid_token` unauthenticated, but advertises RFC 7591 dynamic client registration via Descope (verified 2026-08-18), so the OAuth completes in-client with nothing pasted — `/mcp`, authenticate once. `mcp.dialog.tools/mcp` is an alias of the same deployment. Because an MCP server cannot call another server's tools, a dialog capture runs client-side and is staged through `pain_ingest_records`. Opportunistic primary only; `scripts/reddit_search.py` is the guaranteed path. Its tool names were never observed (the 401 precedes the tool list), so **no agent's `tools:` frontmatter grants a `mcp__dialog__*` tool** — granting a guessed name is worse than not granting one. Consequence to expect, and to not mistake for a bug: the `dialog` probe resolves `unavailable` in every agent, every run, and the run proceeds on Arctic Shift. If the tool names are ever confirmed, add them to `scout` / `skeptic` / `economist` frontmatter; until then the guaranteed path is the only path. |
+| Arctic Shift | works, key-free | `>=1.2s`/req; no global subreddit search. See the two query caveats below. A `422 Timeout. Maybe slow down a bit` now walks the limit ladder `100 → 50 → 25 → 10` with doubling backoff, widening the host interval at each rung (`reddit_search.py:arctic_get_with_recovery`, guarded by `tests/test_arctic_backoff.py`). `403`/`429` remain circuit-broken on sight and are never retried. |
+| `reddit-mcp-buddy` (npx) | **rejected as a key-free path** | Probed 2026-08-18 with credentials scrubbed: Reddit `.json` 403s for every subreddit, so anonymous mode is always the RSS fallback — `engagement` fields all `null`, body truncated at 500 chars, `search_reddit` and `get_post_details` both 403, 10 req/min. No search and no comments makes it unusable for §3.1 capture and caps §3.3 intensity at 1–2. Capable *with* Reddit app credentials, which is a different guarantee. |
 | pullpush (last resort) | works, key-free | `>=4s`/req, stop on first 429. **Has no equivalent of Arctic Shift's `query`** — see below. |
 | HN Algolia | works, key-free | `nbHits` gives bucket counts without paginating. `numericFilters` MUST be URL-encoded. `tags` is AND-combined — the OR form is the parenthesised `tags=(story,comment)`. |
 | GitHub search | works, key-free | 10 req/min unauthenticated; pace ~6.5s/req |
@@ -483,6 +520,25 @@ networking sense — not building permits. Verified: 10/10 results matched the
 stem, 0/10 were about the intended topic. The same word means different things
 in different communities, so a keyphrase that works in one subreddit can be
 pure noise in another.
+
+**3. The `query` endpoint degrades independently of the listing endpoint.**
+Probed 2026-08-18: a plain listing (`--subreddits sysadmin --limit 25`, no
+`--query`) returned full verbatim bodies, real permalinks and real engagement,
+while a full-text query against the same subreddit answered
+`422 Timeout. Maybe slow down a bit` at **every** rung of the limit ladder
+(100/50/25/10) and pullpush then `429`'d. So a 422 on a query is not evidence that
+the archive is down, and it is not fixable by asking for less or by being more
+polite — the ladder in `arctic_get_with_recovery` is a mitigation, not a cure.
+
+Two consequences worth stating so nobody "fixes" this wrongly:
+
+- **Do not substitute a no-query listing** to get a cell unstuck. It works, and it
+  answers a different question — see "The dropped-query rule" below, and
+  `agents/scout.md`, which permits a no-query pull only for a subreddit whose entire
+  topic *is* the cell's vertical.
+- **`dialog` is the real path for query-driven Reddit capture** when the archive's
+  query endpoint is degraded, which is the strongest practical argument for
+  authenticating it. Its results are staged through `pain_ingest_records`.
 
 The practical rule for whoever picks keyphrases (scouts, and the historian in
 `skills/retro-trends`): **prefer multi-word phrases that are unambiguous in the

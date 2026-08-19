@@ -69,6 +69,19 @@ SCRIPTS=(
   reality_cli.py
 )
 
+# The pain-search stage modules. Deliberately NOT in SCRIPTS: they are imports
+# behind scripts/pain_mcp.py (the MCP server), not standalone CLIs, so the
+# --help section below does not apply to them. The credential audit does.
+STAGE_MODULES=(
+  pain_rubric.py
+  pain_stages.py
+  pain_cards.py
+  pain_capture.py
+  pain_intensity.py
+  pain_report.py
+  pain_mcp.py
+)
+
 # ---------------------------------------------------------------------------
 section "presence"
 # ---------------------------------------------------------------------------
@@ -217,12 +230,29 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+section "arctic shift throttle ladder"
+# ---------------------------------------------------------------------------
+# Stubs the HTTP layer and time.sleep to assert the 422 recovery walk, and --
+# more importantly -- that 403/429 are still never retried. The no-evasion
+# discipline is a claim about code, so it is checked as one.
+if [ -f tests/test_arctic_backoff.py ]; then
+  if out="$(uv run --quiet tests/test_arctic_backoff.py 2>&1)"; then
+    ok "arctic shift 422 ladder; 403/429 never retried"
+  else
+    bad "arctic shift 422 ladder; 403/429 never retried" \
+        "$(echo "$out" | grep FAIL | head -3 | tr '\n' ' ')"
+  fi
+else
+  skip "arctic shift throttle ladder"
+fi
+
+# ---------------------------------------------------------------------------
 section "credential audit (static)"
 # ---------------------------------------------------------------------------
 # A read of any credential-shaped env var is a hard failure. Comments are
 # stripped first so that a script *explaining* that it does not read tokens
 # does not trip its own audit.
-for s in "${SCRIPTS[@]}"; do
+for s in "${SCRIPTS[@]}" "${STAGE_MODULES[@]}"; do
   f="scripts/$s"
   if [ ! -f "$f" ]; then skip "$s credential-free"; continue; fi
   hits="$(sed 's/#.*//' "$f" \
@@ -262,6 +292,41 @@ else
     fi
   else
     bad "cluster.py offline backend" "exited non-zero"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+section "offline: pain-search stages"
+# ---------------------------------------------------------------------------
+# The §3.3 rubric as code plus a synthetic end-to-end walk (frame -> merge ->
+# gate -> cluster -> inventory gate -> intensity -> report). Offline: the
+# lexical clustering backend needs no model download, and the walk stages its
+# own evidence rather than capturing any.
+if [ ! -f "tests/test_pain_search.py" ]; then
+  skip "pain-search stage tests"
+else
+  if out="$(PROSPECTOR_EMBED_BACKEND=offline uv run --quiet tests/test_pain_search.py 2>&1)"; then
+    ok "pain-search stage tests ($(echo "$out" | grep -oE 'Ran [0-9]+ tests' | head -1))"
+  else
+    bad "pain-search stage tests" \
+        "$(echo "$out" | grep -E '^(FAIL|ERROR|AssertionError)' | head -3 | tr '\n' ' ')"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+section "offline: pain-search tool schemas"
+# ---------------------------------------------------------------------------
+# The whole point of the tool surface is that a forbidden capture lever cannot
+# be expressed. That claim is only true if it is checked: this asserts no tool
+# exposes a score floor or a date window, and that the source/verdict/status
+# enums actually reach the published JSON Schema.
+if [ ! -f "tests/validate_tool_schemas.py" ]; then
+  skip "pain-search tool schemas"
+else
+  if out="$(uv run --quiet tests/validate_tool_schemas.py 2>&1)"; then
+    ok "pain-search tool schemas (no min_score/after/before; enums present)"
+  else
+    bad "pain-search tool schemas" "$(echo "$out" | grep -E 'FAIL' | head -3 | tr '\n' ' ')"
   fi
 fi
 

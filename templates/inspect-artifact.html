@@ -1,0 +1,297 @@
+<title>Run Inspector</title>
+<!--
+  problem-prospector inspection artifact template (skills/run-inspector).
+
+  How to use, per the skill:
+  1. Build the digest:  uv run scripts/inspect_run.py --slug <slug>
+  2. Replace the value of `DIGEST` below (the /*__DIGEST__*/null marker) with
+     that JSON, after filling its `interpretation` fields with plain-language
+     readings per skills/plain-reading. Interpretation values are HTML strings.
+  3. Set the <title> to a real name for the run and publish with the Artifact
+     tool. Republish the same file at every later stage — same URL, the page
+     renders whatever stages the digest now carries.
+
+  The page is stage-progressive: sections render only when their digest slot
+  is non-null, so a capture-only run and a fully scored run both render
+  honestly from the same template. No CDN dependencies; single file.
+-->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bitter:wght@500;600;700&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root{
+  --ground:#F2F4F1; --panel:#FBFCFA; --panel2:#ECEFEA;
+  --ink:#20261F; --ink2:#4A544C; --muted:#66706A; --line:#D5DAD3;
+  --accent:#0B8158; --accent-ink:#075C3F; --accent-soft:#0B815814;
+  --rust:#B34617; --rust-soft:#B3461712;
+  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --body:'Public Sans',system-ui,-apple-system,sans-serif;
+  --display:'Bitter',Georgia,serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#14181A; --panel:#1B2123; --panel2:#232A2C;
+    --ink:#E6EBE7; --ink2:#B9C2BB; --muted:#8D998F; --line:#333C3B;
+    --accent:#4CC29A; --accent-ink:#7CD9B7; --accent-soft:#4CC29A1C;
+    --rust:#E08A62; --rust-soft:#E08A6218;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#14181A; --panel:#1B2123; --panel2:#232A2C;
+  --ink:#E6EBE7; --ink2:#B9C2BB; --muted:#8D998F; --line:#333C3B;
+  --accent:#4CC29A; --accent-ink:#7CD9B7; --accent-soft:#4CC29A1C;
+  --rust:#E08A62; --rust-soft:#E08A6218;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--body);
+  font-size:15.5px;line-height:1.62;-webkit-font-smoothing:antialiased}
+.wrap{max-width:860px;margin:0 auto;padding:44px 24px 90px}
+a{color:var(--accent-ink);text-decoration-color:var(--line)}
+a:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+h1{font-family:var(--display);font-weight:700;font-size:clamp(28px,5vw,40px);line-height:1.12;
+  margin:10px 0 12px;text-wrap:balance;letter-spacing:-.01em}
+.inspiration{font-family:var(--display);font-weight:500;font-style:italic;font-size:17px;color:var(--ink2);
+  max-width:62ch;margin:0 0 22px}
+.metastrip{display:flex;flex-wrap:wrap;border-top:2px solid var(--ink);border-bottom:1px solid var(--line)}
+.metastrip>div{padding:12px 22px 12px 0;margin-right:22px}
+.metastrip .k{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.metastrip .v{font-family:var(--display);font-weight:600;font-size:22px;font-variant-numeric:tabular-nums}
+.metastrip .v small{font-family:var(--body);font-weight:500;font-size:13px;color:var(--muted);margin-left:4px}
+section{margin-top:54px}
+.leghead{display:flex;align-items:baseline;gap:14px;border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:18px}
+.legnum{font-family:var(--mono);font-weight:600;font-size:12px;letter-spacing:.14em;color:var(--accent-ink);text-transform:uppercase;white-space:nowrap}
+h2{font-family:var(--display);font-weight:600;font-size:22px;margin:0}
+h3{font-family:var(--display);font-weight:600;font-size:16px;margin:22px 0 8px}
+p{max-width:70ch;margin:0 0 14px}
+.small{font-size:13.5px;color:var(--muted)}
+code,.mono{font-family:var(--mono);font-size:.88em}
+code{background:var(--panel2);padding:1px 5px;border-radius:3px}
+.interp{border:1px solid var(--line);border-left:3px solid var(--accent);background:var(--accent-soft);padding:14px 18px;margin:0 0 18px}
+.interp p{margin-bottom:8px}.interp p:last-child{margin-bottom:0}
+.verdict{background:var(--panel);border:1px solid var(--line);border-top:3px solid var(--accent);padding:20px 24px;margin-top:32px}
+.verdict h2{font-size:19px;margin-bottom:10px}
+.verdict p{max-width:none}
+.callout{border:1px solid var(--line);border-left:3px solid var(--rust);background:var(--rust-soft);padding:14px 18px;margin:14px 0}
+.callout.green{border-left-color:var(--accent);background:var(--accent-soft)}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);background:var(--panel)}
+table{border-collapse:collapse;width:100%;font-size:13.5px;line-height:1.45}
+th{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
+  text-align:left;font-weight:500;padding:9px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.cid{font-family:var(--mono);font-weight:600;font-size:12px;color:var(--accent-ink)}
+.tag{display:inline-block;font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;padding:1px 7px;
+  border-radius:2px;background:var(--panel2);color:var(--ink2);white-space:nowrap;margin:1px 2px 1px 0}
+.tag.ok{background:var(--accent-soft);color:var(--accent-ink)}
+.tag.bad{background:var(--rust-soft);color:var(--rust)}
+.chart{background:var(--panel);border:1px solid var(--line);padding:18px 20px 10px;margin-bottom:16px}
+.chart .ctitle{font-family:var(--display);font-weight:600;font-size:15px;margin:0 0 12px}
+.brow{display:grid;grid-template-columns:170px 1fr 58px;align-items:center;gap:10px;padding:4px 0}
+.brow .blabel{font-size:12.5px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.brow .blabel .mono{color:var(--muted);margin-right:6px}
+.bfill{height:14px;border-radius:0 3px 3px 0;background:var(--accent);min-width:2px}
+.brow .bval{font-family:var(--mono);font-size:12px;text-align:right;font-variant-numeric:tabular-nums;color:var(--ink2)}
+.quad{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:16px 0}
+.qcell{border:1px solid var(--line);background:var(--panel);padding:14px 16px}
+.qcell.hot{border-color:var(--accent);background:var(--accent-soft)}
+.qcell .qn{font-family:var(--display);font-weight:700;font-size:28px;font-variant-numeric:tabular-nums;line-height:1}
+.qcell .qk{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-top:4px}
+.qcell .qr{font-size:12.5px;color:var(--ink2);margin-top:8px;line-height:1.45}
+.seam{background:var(--panel);border:1px solid var(--line);margin:14px 0;padding:18px 22px}
+.seam .shead{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px;margin-bottom:4px}
+.seam h3{margin:0;font-size:16.5px}
+.seam .sstats{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-bottom:10px}
+blockquote{margin:10px 0;padding:9px 15px;border-left:3px solid var(--accent);background:var(--accent-soft);
+  font-family:var(--display);font-style:italic;font-size:14.5px;line-height:1.5}
+blockquote .who{display:block;font-family:var(--mono);font-style:normal;font-size:11px;color:var(--muted);margin-top:5px}
+details{border:1px solid var(--line);background:var(--panel);margin:14px 0}
+summary{cursor:pointer;font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink2);padding:10px 16px}
+details[open] summary{border-bottom:1px solid var(--line)}
+details .tablewrap{border:none}
+.footer{margin-top:64px;border-top:2px solid var(--ink);padding-top:16px;font-size:13px;color:var(--muted)}
+[hidden]{display:none!important}
+@media (max-width:560px){.brow{grid-template-columns:110px 1fr 48px}.quad{grid-template-columns:1fr}}
+</style>
+
+<div class="wrap" id="app"><p class="small">This inspector renders from an embedded run digest; if you are reading
+this sentence, the digest is missing — rebuild it with <code>uv run scripts/inspect_run.py</code>.</p></div>
+
+<script>
+const DIGEST = /*__DIGEST__*/null;
+
+function esc(s){const d=document.createElement("span");d.textContent=String(s??"");return d.innerHTML;}
+function el(html){const t=document.createElement("template");t.innerHTML=html.trim();return t.content;}
+const Q_READS = {
+  "high-freq/high-intensity":"Widespread and provably costly — expect competitors; the work is finding the angle in, not proving the problem.",
+  "low-freq/high-intensity":"Few voices, all citing real cost — possible niche gold; demand a real buyer before advancing.",
+  "high-freq/low-intensity":"Many people mention it, almost nobody cites what it cost them — usually an audience to write for, not software someone buys.",
+  "low-freq/low-intensity":"Neither widespread nor provably costly — kept on disk for the record, not advanced.",
+};
+
+function render(d){
+  const app=document.getElementById("app");
+  app.innerHTML="";
+  const I=d.interpretation||{};
+  const interp=(html)=>html?`<div class="interp">${html}</div>`:"";
+  const seams=(d.cards||[]).filter(c=>(c.intensity||0)>=2 && (c.exemplars||[]).length);
+  let leg=0; const legnum=()=>`Leg ${String(++leg).padStart(2,"0")}`;
+
+  // header
+  app.append(el(`<header>
+    <div class="eyebrow">problem-prospector · run inspector · ${esc(d.slug)}</div>
+    <h1>${esc(document.title)}</h1>
+    ${d.inspiration?`<p class="inspiration">&ldquo;${esc(d.inspiration)}&rdquo;</p>`:""}
+    <div class="metastrip">
+      <div><div class="k">Evidence</div><div class="v">${esc(d.evidence_total)}<small>items</small></div></div>
+      <div><div class="k">Search angles</div><div class="v">${(d.cells||[]).length}</div></div>
+      ${d.clustering?`<div><div class="k">Pains found</div><div class="v">${esc(d.clustering.clusters)}<small>clusters</small></div></div>`:""}
+      ${d.cards?`<div><div class="k">Scored 3+</div><div class="v">${d.cards.filter(c=>(c.intensity||0)>=3).length}</div></div>`:""}
+      ${d.gate?`<div><div class="k">Evidence gate</div><div class="v" style="font-size:16px;padding-top:5px">${esc(d.gate.decision)}${d.gate.source_floor_waived?"<small>floor waived</small>":""}</div></div>`:""}
+    </div></header>`));
+
+  if(I.verdict_html) app.append(el(`<div class="verdict"><h2>The read</h2>${I.verdict_html}</div>`));
+
+  // frame
+  if((d.cells||[]).length){
+    const rows=d.cells.map(c=>`<tr><td><span class="cid">${esc(c.cell_id)}</span></td>
+      <td>${esc(c.persona)}</td><td>${esc(c.framing)}</td>
+      <td class="mono">${(c.subreddits||[]).map(esc).join(" · ")}</td>
+      <td class="num">${(c.queries||[]).length}</td></tr>`).join("");
+    app.append(el(`<section><div class="leghead"><span class="legnum">${legnum()} · Frame</span>
+      <h2>The search angles</h2></div>
+      ${interp(I.frame_note)}
+      <p class="small">Each row is one angle the run searched: a specific person, in a specific setting,
+      with one problem framing, using queries phrased the way that person would actually vent.</p>
+      <div class="tablewrap"><table><tr><th>Cell</th><th>Who</th><th>Problem angle</th><th>Communities</th><th class="num">Queries</th></tr>${rows}</table></div>
+      </section>`));
+  }
+
+  // capture
+  if(d.evidence_total){
+    const cells=[...(d.cells||[])].sort((a,b)=>b.items-a.items);
+    const max=Math.max(...cells.map(c=>c.items),1);
+    const bars=cells.map(c=>`<div class="brow">
+      <div class="blabel"><span class="mono">${esc(c.cell_id)}</span>${esc(c.persona)}</div>
+      <div><div class="bfill" style="width:${(c.items/max*100).toFixed(1)}%"></div></div>
+      <div class="bval">${esc(c.items)}</div></div>`).join("");
+    const srcs=Object.entries(d.items_per_source||{}).map(([s,n])=>`<span class="tag ok">${esc(s)} ${esc(n)}</span>`).join(" ");
+    app.append(el(`<section><div class="leghead"><span class="legnum">${legnum()} · Capture</span>
+      <h2>What each angle yielded</h2></div>
+      ${interp(I.capture_note)}
+      <div class="chart"><p class="ctitle">Evidence items per search angle</p>${bars}</div>
+      <p class="small">By source: ${srcs}. Counts are merged and deduplicated — one post captured twice is one item.</p>
+      </section>`));
+  }
+
+  // gate
+  if(d.gate){
+    const g=d.gate; const stopped=g.decision==="stop";
+    app.append(el(`<section><div class="leghead"><span class="legnum">${legnum()} · Evidence gate</span>
+      <h2>Is there enough to trust?</h2></div>
+      ${interp(I.gate_note)}
+      <div class="callout ${stopped?"":"green"}">
+        <p><strong>${stopped?"Stopped":"Proceeded"}${g.source_floor_waived?" — source floor waived on the record":""}.</strong>
+        ${esc(g.guidance||"")}</p>
+        ${g.reasons&&g.reasons.length?`<p class="small">Recorded reasons: ${g.reasons.map(esc).join("; ")}</p>`:""}
+      </div>
+      <p class="small">Failed sources: ${ (g.failed||[]).length } · deliberate skips: ${ (g.skipped||[]).length } ·
+      searched-and-found-nothing: ${ (g.zero_result||[]).length } — three different facts, kept apart:
+      a failure says "we could not look", a skip says "we chose not to", a zero-result says "we looked and it isn't there."</p>
+      </section>`));
+  }
+
+  // clustering
+  if(d.clustering){
+    const c=d.clustering;
+    app.append(el(`<section><div class="leghead"><span class="legnum">${legnum()} · Grouping</span>
+      <h2>Collapsing phrasings into pains</h2></div>
+      ${interp(I.clustering_note)}
+      <p>${esc(c.clusters)} distinct pains at cut <code>${esc(c.cut_basis)}</code>
+      (how tightly posts had to resemble each other to count as the same complaint — in
+      <code>adaptive:pN</code>, only the closest N% of pairs merge; lower splits harder).
+      Largest group: <span class="cid">${esc(c.largest?.cluster_id)}</span> with ${esc(c.largest?.size)} items
+      (${Math.round((c.largest?.share||0)*100)}% of the pool). ${esc(c.unclustered)} items matched nothing
+      closely enough and were left ungrouped rather than forced in.</p>
+      </section>`));
+  }
+
+  // quadrants + seams
+  if(d.quadrants){
+    const order=["high-freq/high-intensity","low-freq/high-intensity","high-freq/low-intensity","low-freq/low-intensity"];
+    const counts=order.map(q=>d.quadrants[q]||0);
+    const hot=counts.indexOf(Math.max(...counts));
+    const qcells=order.map((q,i)=>`<div class="qcell ${i===hot&&counts[i]>0?"hot":""}">
+      <div class="qn">${counts[i]}</div><div class="qk">${esc(q)}</div>
+      <div class="qr">${esc(Q_READS[q])}</div></div>`).join("");
+    const seamHtml=seams.map(c=>{
+      const quotes=(c.exemplars||[]).slice(0,3).map(e=>`<blockquote>&ldquo;${esc(e.quote)}&rdquo;
+        <span class="who"><a href="${esc(e.url)}">source</a></span></blockquote>`).join("");
+      const markers=Object.entries(c.markers||{}).filter(([,v])=>v).map(([m])=>`<span class="tag ok">${esc(m)}</span>`).join("");
+      const note=I.seams&&I.seams[c.cluster_id]?`<p>${I.seams[c.cluster_id]}</p>`:"";
+      return `<div class="seam"><div class="shead"><span class="cid">${esc(c.cluster_id)}</span>
+        <h3>${esc(c.canonical_pain||"")}</h3></div>
+        <div class="sstats">${esc(c.cluster_size)} items · ${esc(c.distinct_authors)} authors ·
+        ${esc(c.distinct_communities)} communities · how widespread: ${esc(c.frequency)} ·
+        how badly it hurts: ${esc(c.intensity)} of 5</div>
+        ${note}${quotes}<div>${markers}</div>
+        ${c.intensity_note?`<p class="small" style="margin-top:8px">${esc(c.intensity_note)}</p>`:""}</div>`;
+    }).join("");
+    const allRows=(d.cards||[]).map(c=>`<tr><td><span class="cid">${esc(c.cluster_id)}</span></td>
+      <td>${esc((c.canonical_pain||"").slice(0,90))}</td><td class="num">${esc(c.cluster_size)}</td>
+      <td class="num">${esc(c.distinct_authors)}</td><td>${esc(c.frequency||"—")}</td>
+      <td class="num">${c.intensity??"—"}</td><td>${esc(c.gate_verdict||"—")}</td>
+      <td>${(c.gate_flags||[]).map(f=>`<span class="tag">${esc(f)}</span>`).join("")}</td></tr>`).join("");
+    app.append(el(`<section><div class="leghead"><span class="legnum">${legnum()} · Findings</span>
+      <h2>Where the pains landed</h2></div>
+      <p class="small">Two independent axes, never blended: how <em>widespread</em> a pain is
+      (posts, distinct people, distinct communities) and how <em>badly it hurts</em>
+      (1–5, earned only by verbatim quotes citing real costs). The grid below is their cross.</p>
+      <div class="quad">${qcells}</div>
+      ${seamHtml?`<h3>The pains with cited costs</h3>${seamHtml}`:""}
+      <details><summary>Every pain on the record (${(d.cards||[]).length})</summary>
+      <div class="tablewrap"><table><tr><th>Id</th><th>Pain</th><th class="num">Items</th>
+      <th class="num">People</th><th>Spread</th><th class="num">Hurt</th><th>Gate</th><th>Flags</th></tr>
+      ${allRows}</table></div></details>
+      </section>`));
+  }
+
+  // saturation
+  if(d.saturation){
+    const rows=d.saturation.map(s=>`<tr><td><span class="cid">${esc(s.cell_id)}</span></td>
+      <td class="num">${s.competitor_count??"—"}</td><td>${esc(s.trend_direction||"—")}</td>
+      <td>${esc(s.read||"—")}</td></tr>`).join("");
+    app.append(el(`<section><div class="leghead"><span class="legnum">${legnum()} · Crowding</span>
+      <h2>Who is already building here</h2></div>
+      <p class="small">A first, key-free competitor count per angle. Every number is a floor —
+      sources that blocked the lookup are recorded, so "0" is never claimed when a source failed.</p>
+      <div class="tablewrap"><table><tr><th>Cell</th><th class="num">Competitors</th><th>Trend</th><th>Read (source's own words)</th></tr>${rows}</table></div>
+      </section>`));
+  }
+
+  // health
+  if(d.health){
+    const k=d.health.counts||{};
+    const rows=(d.health.entries||[]).map(e=>`<tr><td class="mono">${esc(e.source)}</td>
+      <td><span class="tag ${e.status==="ok"?"ok":(e.status==="unavailable"||e.status==="stopped")?"bad":""}">${esc(e.status)}</span></td>
+      <td class="small">${esc(e.detail||"")}</td></tr>`).join("");
+    app.append(el(`<section><div class="leghead"><span class="legnum">${legnum()} · Sources</span>
+      <h2>What every data source actually did</h2></div>
+      ${interp(I.pipeline_note)}
+      <p class="small">${esc(k.ok||0)} clean answers · ${esc(k.degraded||0)} partial ·
+      ${esc(k.unavailable||0)} failures · ${esc(k.skipped||0)} deliberate skips ·
+      ${esc(k.zero_result||0)} searched-and-empty. A failed source is never reported as
+      "nobody is complaining."</p>
+      <details><summary>Full source ledger (${(d.health.entries||[]).length} entries)</summary>
+      <div class="tablewrap"><table><tr><th>Source</th><th>Status</th><th>Detail</th></tr>${rows}</table></div></details>
+      </section>`));
+  }
+
+  app.append(el(`<div class="footer">
+    <p>Generated ${esc(d.generated_utc)} from <code>runs/${esc(d.slug)}/</code> — every card, quote URL,
+    cluster and source event above is on disk there, unabridged.
+    ${d.report_path?`The pipeline's own rendered report: <code>${esc(d.report_path)}</code>.`:""}</p>
+  </div>`));
+}
+if(DIGEST) render(DIGEST);
+</script>

@@ -39,6 +39,7 @@ behaves identically in a host that refuses to spawn the opportunistic MCPs.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Literal
@@ -50,6 +51,7 @@ from mcp.server.fastmcp import FastMCP  # noqa: E402
 # Aliased away from the `pain_*` namespace on purpose: a tool named `pain_report`
 # would otherwise rebind the module of the same name, and every call that reached
 # through it would raise AttributeError at runtime with a clean import.
+import inspect_run as inspect_stage  # noqa: E402
 import pain_capture as capture_stage  # noqa: E402
 import pain_cards as cards_stage  # noqa: E402
 import pain_intensity as intensity_stage  # noqa: E402
@@ -435,6 +437,47 @@ def pain_report(slug: str, verbose: bool = False) -> dict:
     rubric-interpretation disclosures.
     """
     return report_stage.render_report(slug, verbose=verbose)
+
+
+@mcp.tool()
+def pain_run_digest(slug: str) -> dict:
+    """Build the read-only inspection digest of one run — the meta-inspection surface.
+
+    Writes `runs/<slug>/digest.json` holding everything an inspection artifact
+    renders: the frame with per-cell capture counts, source totals, the
+    thin-capture gate verdict evaluated without recording a stop, the
+    clustering shape, every card's panels with its validated exemplars, the
+    2x2 quadrant counts, staged saturation reads, and the full source-health
+    ledger. Stage-progressive: a section whose stage has not run is null,
+    never fabricated.
+
+    Returns a compact summary plus the digest path — read the file for the
+    full card list rather than pulling 90+ cards through a tool result. The
+    digest's `interpretation` object ships as nulls: plain-language readings
+    are the presenting agent's job (skills/plain-reading), never this tool's,
+    so the mechanical and judged layers stay separable and auditable.
+    """
+    digest = inspect_stage.build_digest(slug)
+    path = stages.run_dir(slug) / "digest.json"
+    path.write_text(json.dumps(digest, indent=1), encoding="utf-8")
+    cards = digest.get("cards") or []
+    return {
+        "ok": True,
+        "digest_path": str(path),
+        "evidence_total": digest["evidence_total"],
+        "gate": {
+            "decision": (digest.get("gate") or {}).get("decision"),
+            "source_floor_waived": (digest.get("gate") or {}).get("source_floor_waived"),
+        } if digest.get("gate") else None,
+        "clustering": digest.get("clustering"),
+        "quadrants": digest.get("quadrants"),
+        "health_counts": digest["health"]["counts"],
+        "top_cards": [
+            {k: c[k] for k in ("cluster_id", "canonical_pain", "cluster_size",
+                               "frequency", "intensity", "quadrant")}
+            for c in cards[:5]
+        ],
+    }
 
 
 if __name__ == "__main__":

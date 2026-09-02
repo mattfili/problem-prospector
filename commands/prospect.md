@@ -473,6 +473,11 @@ number and its own place in the sort.
 
 ## Stage 6 — Render OpportunityCards
 
+**Load `skills/plain-reading` before presenting anything from this stage to the
+user.** The files keep their contract vocabulary verbatim; every sentence
+composed for a human follows the translation contract — meaning first, terms
+glossed at first use, the mechanical handle and evidence path kept alongside.
+
 **Gate in — the renderable-card predicate.** A card may not appear **in the ranked list**
 until all of `frequency`, `intensity`, `quadrant`, `wtp`, `skeptic`, `retro_trend`,
 `saturation`, `inventory_gate` are **present** (a panel with no evidence is `null` *with a

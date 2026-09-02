@@ -51,7 +51,7 @@ EXPECTED_TOOLS = {
     "pain_capture_saturation", "pain_record_source_decision", "pain_merge_staging",
     "pain_ingest_records",
     "pain_capture_gate", "pain_cluster", "pain_inventory_gate", "pain_score_intensity",
-    "pain_report",
+    "pain_report", "pain_run_digest",
 }
 
 

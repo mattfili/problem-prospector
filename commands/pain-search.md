@@ -110,6 +110,11 @@ you cite, not from a view you form.
 
 ## How to end
 
+**Load `skills/plain-reading` before composing the summary.** Everything below
+is presented under its translation contract: meaning first, every term of art
+glossed at first use, the mechanical handle kept alongside, failure / skip /
+zero-result kept apart.
+
 Give the sort key, then each cluster in order: the pain in the operator's own
 frame, the frequency numbers with `distinct_authors` beside `cluster_size`, the
 intensity score with a marker or two and the quote behind it, and the 2x2 read.

@@ -212,6 +212,12 @@ section "contract enum consistency"
 if python3 tests/validate_enums.py; then ok "no CONTRACTS enum drift"
 else bad "no CONTRACTS enum drift" "see output above"; fi
 
+# A runtime message that cites §3.3 or leans on an unglossed field name is a
+# citation, not an explanation — the reader does not have this repo open. The
+# glossary is read at run time so this cannot rot as it grows.
+if python3 tests/validate_user_strings.py 2>/dev/null; then ok "runtime messages are self-contained"
+else bad "runtime messages are self-contained" "messages cite sections or undefined contract terms"; fi
+
 # ---------------------------------------------------------------------------
 section "mcp grant namespace"
 # ---------------------------------------------------------------------------

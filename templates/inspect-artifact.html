@@ -128,11 +128,20 @@ const Q_READS = {
   "high-freq/low-intensity":"Many people mention it, almost nobody cites what it cost them — usually an audience to write for, not software someone buys.",
   "low-freq/low-intensity":"Neither widespread nor provably costly — kept on disk for the record, not advanced.",
 };
+const Q_NAMES = {
+  "high-freq/high-intensity":"Widespread and costly",
+  "low-freq/high-intensity":"Rare but costly",
+  "high-freq/low-intensity":"Widespread, low cited cost",
+  "low-freq/low-intensity":"Rare, low cited cost",
+};
 
 function render(d){
   const app=document.getElementById("app");
   app.innerHTML="";
   const I=d.interpretation||{};
+  // An identifier never stands alone: every cell id renders with its persona.
+  const cellWho=Object.fromEntries((d.cells||[]).map(c=>[c.cell_id,c.persona||""]));
+  const cellName=(cid)=>`<span class="cid">${esc(cid)}</span> ${esc(cellWho[cid]||"")}`;
   const interp=(html)=>html?`<div class="interp">${html}</div>`:"";
   const seams=(d.cards||[]).filter(c=>(c.intensity||0)>=2 && (c.exemplars||[]).length);
   let leg=0; const legnum=()=>`Leg ${String(++leg).padStart(2,"0")}`;
@@ -222,7 +231,9 @@ function render(d){
     const counts=order.map(q=>d.quadrants[q]||0);
     const hot=counts.indexOf(Math.max(...counts));
     const qcells=order.map((q,i)=>`<div class="qcell ${i===hot&&counts[i]>0?"hot":""}">
-      <div class="qn">${counts[i]}</div><div class="qk">${esc(q)}</div>
+      <div class="qn">${counts[i]}</div>
+      <div style="font-family:var(--display);font-weight:600;font-size:14px;margin-top:4px">${esc(Q_NAMES[q])}</div>
+      <div class="qk">${esc(q)}</div>
       <div class="qr">${esc(Q_READS[q])}</div></div>`).join("");
     const seamHtml=seams.map(c=>{
       const quotes=(c.exemplars||[]).slice(0,3).map(e=>`<blockquote>&ldquo;${esc(e.quote)}&rdquo;
@@ -250,6 +261,12 @@ function render(d){
       <div class="quad">${qcells}</div>
       ${seamHtml?`<h3>The pains with cited costs</h3>${seamHtml}`:""}
       <details><summary>Every pain on the record (${(d.cards||[]).length})</summary>
+      <p class="small" style="padding:10px 16px 0"><strong>Column key:</strong> <em>Items</em> — posts and
+      comments grouped as this pain. <em>People</em> — how many different authors wrote them (ten posts from
+      one person is one voice). <em>Spread</em> — how widespread it looks (high / medium / low). <em>Hurt</em> —
+      1–5, earned only by verbatim quotes citing real costs; 1 means nothing citable, not "mild".
+      <em>Gate</em> — pass or exclude under the no-physical-goods rule. <em>Flags</em> — recorded caveats that
+      inform but never re-rank.</p>
       <div class="tablewrap"><table><tr><th>Id</th><th>Pain</th><th class="num">Items</th>
       <th class="num">People</th><th>Spread</th><th class="num">Hurt</th><th>Gate</th><th>Flags</th></tr>
       ${allRows}</table></div></details>
@@ -258,14 +275,20 @@ function render(d){
 
   // saturation
   if(d.saturation){
-    const rows=d.saturation.map(s=>`<tr><td><span class="cid">${esc(s.cell_id)}</span></td>
+    const rows=d.saturation.map(s=>`<tr><td>${cellName(s.cell_id)}</td>
       <td class="num">${s.competitor_count??"—"}</td><td>${esc(s.trend_direction||"—")}</td>
       <td>${esc(s.read||"—")}</td></tr>`).join("");
     app.append(el(`<section><div class="leghead"><span class="legnum">${legnum()} · Crowding</span>
       <h2>Who is already building here</h2></div>
-      <p class="small">A first, key-free competitor count per angle. Every number is a floor —
-      sources that blocked the lookup are recorded, so "0" is never claimed when a source failed.</p>
-      <div class="tablewrap"><table><tr><th>Cell</th><th class="num">Competitors</th><th>Trend</th><th>Read (source's own words)</th></tr>${rows}</table></div>
+      <p class="small"><strong>Column key:</strong> <em>Search angle</em> — the persona from the frame above.
+      <em>Competitors</em> — named products or projects already building against that angle, from a key-free
+      public lookup. <em>Trend</em> — whether new entrants are accelerating, flat, or declining.
+      <em>Read</em> — the lookup tool's own wording, kept verbatim so nothing is smoothed over.</p>
+      <p class="small"><strong>Reading the jargon in the verbatim column:</strong> "FLOOR ONLY" means a lookup
+      source failed, so the true competitor count can only be <em>higher</em> than shown — a low number here is
+      never proof of an empty field. "Off-domain" means the lookup surfaced a candidate that didn't actually
+      match the idea, and it was discarded rather than counted.</p>
+      <div class="tablewrap"><table><tr><th>Search angle</th><th class="num">Competitors</th><th>Trend</th><th>Read (source's own words)</th></tr>${rows}</table></div>
       </section>`));
   }
 
@@ -283,6 +306,9 @@ function render(d){
       ${esc(k.zero_result||0)} searched-and-empty. A failed source is never reported as
       "nobody is complaining."</p>
       <details><summary>Full source ledger (${(d.health.entries||[]).length} entries)</summary>
+      <p class="small" style="padding:10px 16px 0">Entries are kept verbatim as the pipeline wrote them. Where a
+      detail names a cell id (m01, m02, …), it means the search angle of that id in the frame table at the top —
+      ${(d.cells||[]).map(c=>`${esc(c.cell_id)} is ${esc(c.persona)}`).join(", ")}.</p>
       <div class="tablewrap"><table><tr><th>Source</th><th>Status</th><th>Detail</th></tr>${rows}</table></div></details>
       </section>`));
   }

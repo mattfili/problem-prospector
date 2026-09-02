@@ -48,6 +48,23 @@ in the files), and the raw evidence one click or one path away.
 7. **The mechanism stays reachable.** Every translated claim names its source:
    the card path, the cluster id, the quote URL. Plain language that cannot be
    audited back to the file is spin, not explanation.
+8. **An identifier never stands alone.** A cell id, cluster id, or run slug
+   always travels with its human referent at every rendering — "m01 — HVAC
+   company owner", "c06 — AI-hallucinated citations drawing sanctions" — in
+   every table row, chart label, and sentence, not just at first mention. The
+   bare handle is for grepping the files; the pairing is for reading. A table
+   whose first column is bare ids fails this even when the ids are defined
+   somewhere else on the page.
+9. **Headers and passthrough strings are glossed where they stand.** Every
+   table carries a visible column key (one line, above or below it) defining
+   what each column means and how to read its scale; every section heading is
+   followed by a sentence saying what the section shows. A string kept
+   verbatim from a tool — a saturation read, a health detail, a recorded
+   reason — stays verbatim, but its recurring jargon gets a standing gloss
+   beside the table ("FLOOR ONLY means a lookup source failed, so the true
+   count can only be higher"). This applies to your own interpretation prose
+   too: a term of art you introduce ("cut", "tightness", "ungrouped") carries
+   its parenthetical definition in the same sentence.
 
 ## What this skill never does
 

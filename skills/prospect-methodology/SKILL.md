@@ -284,6 +284,21 @@ costs you the frequency signal. Record deliberate skips in `source_health.json`
 with `"status": "skipped"` and a one-clause reason, so the skip is a decision on the
 record rather than a gap.
 
+**Listings boards are not pain sources.** The table above governs sources per
+framing; an orthogonal trap is the *community that is a marketplace*. A subreddit
+whose posts are predominantly listings (`[FOR HIRE]`, `[Hiring]`, `[WTS]`,
+`[WTB]`, "commissions open") answers pain-vocabulary queries with *inventory,
+not complaints* — sellers describing the service that solves the pain, in the
+pain's own words. Those listings cluster beautifully and read as frequency.
+Observed live: 53 `[FOR HIRE]` posts from one marketplace subreddit formed a
+run's second-largest cluster, a 12% distortion of the frequency signal. The rule
+is mechanical, like the body-less-noise filter — no pain judgment involved: when
+a community's results are dominated by bracket-tagged listing titles, drop the
+tagged items at capture and record the community in `source_health.json` as
+`"status": "listings-board"` with the dropped count, so the exclusion is on the
+record. A genuine complaint posted *to* a marketplace sub still survives — only
+listing-tagged items are dropped, never the community's untagged posts.
+
 **Evidence shape** (CONTRACTS §2) — one JSON object per line, append-only, never
 edited by later stages: `id` (sha1 of source+url, stable across runs so `/rescan`
 can diff), `cell_id`, `source` (enum: `reddit|hackernews|stackoverflow|producthunt|github|pypi|npm|wikipedia|google-trends|dialog`), `url` (real resolvable permalink

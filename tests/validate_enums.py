@@ -50,6 +50,7 @@ ENUMS: dict[str, set[str]] = {
         "degraded",
         "unavailable",
         "skipped",
+        "listings-board",  # community is a marketplace; tagged listings dropped (§3.1)
         "searched-no-results",
         "stopped",
         # crawl.py manifest

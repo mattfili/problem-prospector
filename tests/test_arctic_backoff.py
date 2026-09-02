@@ -3,23 +3,31 @@
 # requires-python = ">=3.11,<3.13"
 # dependencies = ["requests"]
 # ///
-"""Regression test for the Arctic Shift throttle ladder in reddit_search.py.
+"""Regression test for the Arctic Shift timeout retries in reddit_search.py.
 
-Found live: a full-text query against r/sysadmin answered
-`HTTP 422: Timeout. Maybe slow down a bit`, the single retry answered the same,
-pullpush then answered `429`, and the cell captured nothing. The archive times out
-on a heavy query whatever our cadence is, so asking for progressively less is the
-only recovery that works.
+Measured live (2026-09-01, 20 query-cells at a fixed limit=30): the
+`HTTP 422: Timeout. Maybe slow down a bit` answer is stochastic, not
+size-correlated — ~36% of requests succeed per attempt, ~80% within four
+attempts at a constant limit, and limit=5 can fail where limit=100 succeeds.
+The earlier shrink-ladder (50/25/10) was built on the opposite premise and had
+a dead zone: a caller limit at or below its smallest rung got ZERO retries,
+and a shrunk limit fed back into pagination pinned every later page at the
+floor. This file previously only exercised limit=100, which is why it never
+caught that.
 
 What must stay true, and is checked here:
 
-  * a "slow down" 422 is retried more than once, at successively smaller limits;
-  * the backoff doubles at each rung and the host interval is widened each time,
+  * a "slow down" 422 is retried up to TIMEOUT_MAX_RETRIES times at the SAME
+    limit — including small caller limits (the dead-zone regression);
+  * the effective limit returned on the timeout path is the caller's limit,
+    so pagination never gets pinned smaller by a transient timeout;
+  * the backoff doubles per retry and the host interval is widened each time,
     so we obey "slow down" harder rather than hammering at the same cadence;
   * a `limit` rejection still gets exactly one retry — the host told us the number
     was wrong, and repeating that is pointless;
   * **403 and 429 are never retried.** That is the repo's no-evasion discipline and
-    the reason this test exists next to the ladder rather than trusting the comment.
+    the reason this test exists next to the retry loop rather than trusting the
+    comment.
 
 `time.sleep` is stubbed, so this runs in milliseconds and asserts on the backoff
 schedule it *would* have used.
@@ -103,32 +111,40 @@ def run(results: list[rs.FetchResult], limit: int = 100):
 
 
 def main() -> int:
-    print("arctic shift throttle ladder:")
+    print("arctic shift timeout retries:")
 
-    # --- recovers on a later rung -------------------------------------------
+    # --- recovers on a later attempt, at the same limit ----------------------
     result, effective, fetcher, sleeps = run([timeout(), timeout(), ok()])
     check("retries past the first attempt", len(fetcher.limits) == 3,
           f"made {len(fetcher.limits)} requests")
-    check("walks the limit ladder down", fetcher.limits == [100, 50, 25],
+    check("retries at a constant limit", fetcher.limits == [100, 100, 100],
           f"limits {fetcher.limits}")
-    check("recovers and reports the effective limit", result.ok and effective == 25,
+    check("recovers and keeps the caller's limit", result.ok and effective == 100,
           f"ok={result.ok} effective={effective}")
     check("backoff doubles", sleeps == [3.0, 6.0], f"sleeps {sleeps}")
-    check("widens the host interval each rung", len(fetcher.throttle.widened) == 2,
+    check("widens the host interval each retry", len(fetcher.throttle.widened) == 2,
           f"widened {fetcher.throttle.widened}")
 
-    # --- exhausts the ladder and reports the failure honestly ---------------
+    # --- small caller limits get the same retries (the dead-zone regression) -
+    result, effective, fetcher, sleeps = run([timeout(), ok()], limit=10)
+    check("limit=10 is retried", fetcher.limits == [10, 10] and result.ok,
+          f"limits {fetcher.limits} ok={result.ok}")
+    result, effective, fetcher, sleeps = run([timeout(), timeout(), ok()], limit=5)
+    check("limit=5 is retried with backoff", fetcher.limits == [5, 5, 5]
+          and sleeps == [3.0, 6.0], f"limits {fetcher.limits} sleeps {sleeps}")
+
+    # --- exhausts the retries and reports the failure honestly ---------------
     result, effective, fetcher, sleeps = run([timeout()] * 5)
-    check("exhausts the ladder", fetcher.limits == [100, 50, 25, 10],
+    check("exhausts the retries", fetcher.limits == [100, 100, 100, 100],
           f"limits {fetcher.limits}")
-    check("still fails cleanly after the ladder", not result.ok and effective == 10,
+    check("still fails cleanly after the retries", not result.ok and effective == 100,
           f"ok={result.ok} effective={effective}")
     check("backoff schedule is 3/6/12", sleeps == [3.0, 6.0, 12.0], f"sleeps {sleeps}")
 
     # --- a 429 arriving mid-walk ends it, and is never retried --------------
     throttled = rs.FetchResult(False, 429, None, "HTTP 429")
     result, _, fetcher, _ = run([timeout(), throttled, ok()])
-    check("429 mid-walk stops the ladder", fetcher.limits == [100, 50],
+    check("429 mid-walk stops the retries", fetcher.limits == [100, 100],
           f"limits {fetcher.limits}")
     check("429 is surfaced, not recovered", result.status == 429, f"status {result.status}")
 

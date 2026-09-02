@@ -87,12 +87,15 @@ REQUEST_TIMEOUT = 30
 MAX_PER_REQUEST = 100
 DEGRADED_LIMIT = 50  # what a 400/422 "limit too high" is retried at
 TIMEOUT_BACKOFF = 3.0  # first pause after Arctic Shift says "slow down a bit"
-# Successive limits tried after a "slow down a bit" 422, each with double the
-# previous backoff. One retry was not enough in practice: the archive answers a
-# heavy full-text query with a timeout regardless of our cadence, and asking for
-# less is the only thing that helps. Obeying "slow down" harder is not evasion --
-# 403 and 429 are still circuit-broken on sight, never retried.
-TIMEOUT_LIMIT_LADDER = (50, 25, 10)
+# Retries after a "slow down a bit" 422, at the SAME limit, each with double the
+# previous backoff. Measured live (2026-09-01, 20 query-cells at a fixed
+# limit=30): the 422 is stochastic, not size-correlated -- ~36% of requests
+# succeed per attempt, ~80% within four attempts at a constant limit, and
+# limit=5 can fail where limit=100 succeeds. Shrinking the limit buys nothing
+# and costs coverage, and the old shrink-ladder had a dead zone: a caller limit
+# at or below its smallest rung got zero retries. Obeying "slow down" harder is
+# not evasion -- 403 and 429 are still circuit-broken on sight, never retried.
+TIMEOUT_MAX_RETRIES = 3
 MAX_HOST_INTERVAL = 8.0  # ceiling for the adaptive slow-down
 
 # Bodies that mean "the body is gone", not "the body says this".
@@ -281,11 +284,13 @@ def arctic_get_with_recovery(
     A `limit` rejection gets exactly one retry at a smaller limit: the host told us
     the number was wrong, and retrying more times changes nothing.
 
-    A "slow down a bit" timeout walks `TIMEOUT_LIMIT_LADDER`, widening the host
-    interval and doubling the backoff at each rung. The archive answers a heavy
-    full-text query with a timeout whatever our cadence is, so asking for
-    progressively less is the only move that helps. The walk stops early on success,
-    on a different kind of failure, or once the host is circuit-broken — a 403 or 429
+    A "slow down a bit" timeout gets up to `TIMEOUT_MAX_RETRIES` retries at the
+    same limit, widening the host interval and doubling the backoff each time.
+    The timeout is stochastic, not size-correlated (see TIMEOUT_MAX_RETRIES),
+    so the limit is never shrunk for it — shrinking cost coverage and, worse,
+    a shrunk limit fed back into pagination pinned every later page at the
+    floor with zero retries. The walk stops early on success, on a different
+    kind of failure, or once the host is circuit-broken — a 403 or 429
     arriving mid-walk ends it immediately and is never retried.
     """
     limit = params.get("limit", MAX_PER_REQUEST)
@@ -307,28 +312,22 @@ def arctic_get_with_recovery(
         return fetcher.get(url, retry_params), degraded
 
     host = urlparse(url).netloc
-    effective = limit
-    for rung, candidate in enumerate(TIMEOUT_LIMIT_LADDER):
-        if candidate >= effective:
-            continue  # never retry asking for the same or more
-        effective = candidate
+    for attempt in range(TIMEOUT_MAX_RETRIES):
         # The host literally asked us to slow down, so widen its interval for the
         # rest of the run instead of hammering it again at the same cadence.
         widened = fetcher.throttle.slow_down(host)
-        backoff = TIMEOUT_BACKOFF * (2 ** rung)
+        backoff = TIMEOUT_BACKOFF * (2 ** attempt)
         log(
             f"{label}: {result.error}; host interval now {widened:.1f}s, "
-            f"backing off {backoff:.0f}s and retrying at limit={effective}"
+            f"backing off {backoff:.0f}s and retrying at limit={limit}"
         )
         time.sleep(backoff)
-        retry_params = dict(params)
-        retry_params["limit"] = effective
-        result = fetcher.get(url, retry_params)
+        result = fetcher.get(url, params)
         if result.ok:
-            return result, effective
+            return result, limit
         if classify_recoverable(result.error, result.status) != "timeout":
-            return result, effective  # a different failure, or circuit-broken
-    return result, effective
+            return result, limit  # a different failure, or circuit-broken
+    return result, limit
 
 
 # --------------------------------------------------------------------------- #

@@ -26,7 +26,8 @@
         "run",
         "--quiet",
         "${CLAUDE_PLUGIN_ROOT}/scripts/pain_mcp.py"
-      ]
+      ],
+      "timeout": 3600000
     }
   }
 }

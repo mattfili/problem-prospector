@@ -159,12 +159,14 @@ def pain_capture_reddit(
     archive wants >=1.2s between requests per IP, shared across every process, so
     the pacing multiplier has to know about its siblings. It is floored at 2 even for
     a lone capture, because a single capture at the bare interval was observed
-    drawing a throttle. On a "slow down" timeout the script walks a limit ladder
-    (100 -> 50 -> 25 -> 10) with doubling backoff before giving up; a 403 or 429 is
-    circuit-broken on sight and never retried.
+    drawing a throttle. A "slow down" timeout is stochastic, not size-correlated,
+    so the script retries at the SAME limit with doubling backoff before giving
+    up; a 403 or 429 is circuit-broken on sight and never retried.
 
-    Omit `query` only for a subreddit whose entire topic *is* this cell's vertical;
-    for a broad sub the latest 100 posts are mostly unrelated noise that clusters.
+    Omit `subreddits` to use the cell's own list from `inputs.json` — the frame
+    already named the communities. Omit `query` only for a subreddit whose entire
+    topic *is* this cell's vertical; for a broad sub the latest 100 posts are
+    mostly unrelated noise that clusters.
     """
     return capture_stage.capture_reddit(
         slug, cell_id, query, subreddits or [], concurrent_captures, retry_at_limit_50

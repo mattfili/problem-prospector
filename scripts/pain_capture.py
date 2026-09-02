@@ -31,6 +31,7 @@ from pain_stages import (
     TRENDING_ONLY_SOURCES,
     append_health,
     invoke,
+    read_json,
     read_jsonl,
     run_dir,
 )
@@ -75,10 +76,24 @@ def capture_reddit(
     (truncating the pull truncates the frequency denominator). `retry_at_limit_50`
     is the one sanctioned deviation: a single retry for a subreddit whose comment
     pulls 422'd.
+
+    An empty `subreddits` falls back to the cell's own list in `inputs.json` —
+    the frame already named the communities, and requiring the caller to retype
+    them produced a live run whose first capture wave failed for want of a
+    parameter the run had on disk all along (observed 2026-09-02).
     """
+    if not subreddits:
+        inputs = read_json(run_dir(slug) / "inputs.json") or {}
+        cell = next(
+            (c for c in inputs.get("matrix", []) if c.get("cell_id") == cell_id), {}
+        )
+        subreddits = list(cell.get("subreddits") or [])
     out = _staging(slug, f"reddit-{cell_id}.jsonl")
     args = [
-        "--subreddits", ",".join(s.lstrip("r/").strip("/") for s in subreddits),
+        # removeprefix, not lstrip: lstrip("r/") strips *characters*, which ate
+        # the leading letter of any subreddit starting with r (restaurantowners
+        # -> estaurantowners, observed live 2026-09-02).
+        "--subreddits", ",".join(s.strip("/").removeprefix("r/") for s in subreddits),
         "--limit", "50" if retry_at_limit_50 else "100",
         "--comments", "--comments-per-post", "10", "--comments-max-posts", "25",
         "--politeness", str(float(max(POLITENESS_FLOOR, concurrent_captures))),

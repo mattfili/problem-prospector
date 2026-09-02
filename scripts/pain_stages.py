@@ -502,14 +502,71 @@ def capture_gate(slug: str, record: bool = True) -> dict:
             f"{entry.get('source')} ({entry.get('detail')})"
         )
 
+    # The source floor's universe is the sources capture can actually query at
+    # this stage: reddit plus the keyword-searchable trio. A source every cell
+    # deliberately skipped on relevance grounds is a decision, not a gap — for
+    # a non-technical frame the relevance table itself rules most sources out,
+    # and counting those skips as silence made the floor structurally
+    # unreachable (observed live 2026-09-02: 928 items stopped by the floor).
+    universe = {"reddit", *QUERYABLE_SOURCES}
+    skip_recorded = {
+        str(e.get("source") or "").split(":")[0]
+        for e in health if str(e.get("status")) == "skipped"
+    }
+    attempted = sorted((universe - skip_recorded) | set(responding))
+    silent_attempted = sorted(set(attempted) - set(responding))
+
     decision = "proceed"
     reasons: list[str] = []
+    source_floor_waived = False
     if len(records) < THIN_CAPTURE_MIN_ITEMS:
         decision = "stop"
         reasons.append(f"{len(records)} items < {THIN_CAPTURE_MIN_ITEMS}")
     if len(responding) < THIN_CAPTURE_MIN_SOURCES:
-        decision = "stop"
-        reasons.append(f"{len(responding)} responding sources < {THIN_CAPTURE_MIN_SOURCES}")
+        if silent_attempted:
+            decision = "stop"
+            reasons.append(
+                f"{len(responding)} responding sources < {THIN_CAPTURE_MIN_SOURCES}"
+            )
+        else:
+            # Every source the frame considered relevant answered; the floor is
+            # waived rather than silently passed, and says so on the record.
+            source_floor_waived = True
+
+    # Guidance names the leg(s) that actually fired, never a leg that held.
+    guidance_parts: list[str] = []
+    if any("items <" in r for r in reasons):
+        guidance_parts.append(
+            f"Stopping: only {len(records)} posts captured. Below "
+            f"~{THIN_CAPTURE_MIN_ITEMS} posts a group of 2 looks identical to a "
+            "group of 40 in the report, which is how one loud thread becomes a "
+            "\"market\". Two fixes: add search angles, or rewrite queries the way "
+            "someone venting at 11pm would phrase them — \"permit system "
+            "nightmare\", not \"municipal workflow inefficiency\". Then capture "
+            "again."
+        )
+    if any("responding sources" in r for r in reasons):
+        guidance_parts.append(
+            f"Stopping: only {len(responding)} of {len(attempted)} relevant "
+            f"sources returned anything ({', '.join(silent_attempted)} stayed "
+            "silent). One source's voice reads as the whole world's; retry the "
+            "silent sources or reconsider whether they fit this frame, then "
+            "capture again."
+        )
+    if decision == "stop":
+        guidance_parts.append(
+            "A source that failed is never reported as 'no discussion found'."
+        )
+        guidance = " ".join(guidance_parts)
+    elif source_floor_waived:
+        guidance = (
+            f"Gate holds — cluster next. Note: only {len(responding)} sources "
+            "responded, but every non-responding source was a recorded relevance "
+            "skip, so the source floor is waived rather than failed. Breadth "
+            "rests on the per-cluster community count downstream."
+        )
+    else:
+        guidance = "Gate holds — cluster next."
 
     if decision == "stop" and record:
         append_health(slug, [{
@@ -521,20 +578,12 @@ def capture_gate(slug: str, record: bool = True) -> dict:
     return {
         "decision": decision, "reasons": reasons, "total_items": len(records),
         "items_per_source": per_source, "responding_sources": responding,
+        "attempted_sources": attempted,
+        "source_floor_waived": source_floor_waived,
         "failed": by_status.get("unavailable", []),
         "degraded": by_status.get("degraded", []),
         "skipped": by_status.get("skipped", []),
         "zero_result": [v for k, v in by_status.items() if k.startswith("searched-no-")
                         for v in ([v] if isinstance(v, str) else v)],
-        "guidance": (
-            f"Stopping: {len(records)} posts from {len(responding)} sources. Below "
-            f"~{THIN_CAPTURE_MIN_ITEMS} posts a group of 2 looks identical to a "
-            "group of 40 in the report, which is how one loud thread becomes a "
-            "\"market\". Two fixes: add search angles, or rewrite queries the way "
-            "someone venting at 11pm would phrase them — \"permit system "
-            "nightmare\", not \"municipal workflow inefficiency\". Then capture "
-            "again. A source that failed is never reported as 'no discussion "
-            "found'." if decision == "stop" else
-            "Gate holds — cluster next."
-        ),
+        "guidance": guidance,
     }

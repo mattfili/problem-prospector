@@ -377,6 +377,54 @@ class DialogIngest(unittest.TestCase):
         self.assertEqual(len([r for r in records if r["url"].rstrip("/") == shared.rstrip("/")]), 1)
 
 
+class ThinCaptureSourceFloor(unittest.TestCase):
+    """The source floor distinguishes a recorded relevance skip from silence.
+
+    Observed live (2026-09-02): a 928-item run with every non-technical source
+    deliberately skipped was stopped by "2 responding sources < 3" — a floor
+    that frame could never satisfy. A skip is a decision on the record; only a
+    relevant source that stayed SILENT may fire the source leg.
+    """
+
+    def gate(self, n_items: int, per_source: dict, health: list[dict]) -> dict:
+        records = [{"id": str(i)} for i in range(n_items)]
+        real_records = pain_stages.evidence_records
+        real_jsonl = pain_stages.read_jsonl
+        pain_stages.evidence_records = lambda slug: (records, per_source)
+        pain_stages.read_jsonl = lambda path: (health, 0)
+        try:
+            return pain_stages.capture_gate("synthetic-floor-test", record=False)
+        finally:
+            pain_stages.evidence_records = real_records
+            pain_stages.read_jsonl = real_jsonl
+
+    def test_all_silent_sources_skipped_waives_the_floor(self) -> None:
+        gate = self.gate(60, {"reddit": 47, "hackernews": 13}, [
+            {"source": "stackoverflow", "status": "skipped", "detail": "no code surface"},
+            {"source": "producthunt", "status": "skipped", "detail": "vendor copy"},
+        ])
+        self.assertEqual(gate["decision"], "proceed")
+        self.assertTrue(gate["source_floor_waived"])
+        self.assertIn("relevance skip", gate["guidance"])
+
+    def test_a_silent_attempted_source_still_stops(self) -> None:
+        gate = self.gate(60, {"reddit": 47, "hackernews": 13}, [
+            {"source": "stackoverflow", "status": "skipped", "detail": "no code surface"},
+        ])
+        self.assertEqual(gate["decision"], "stop")
+        self.assertFalse(gate["source_floor_waived"])
+        self.assertIn("producthunt", gate["guidance"])
+        # The guidance names the failing leg only — no item-count story here.
+        self.assertNotIn("group of 2 looks identical", gate["guidance"])
+
+    def test_item_floor_guidance_names_only_the_item_leg(self) -> None:
+        gate = self.gate(10, {"reddit": 5, "hackernews": 3, "stackoverflow": 2}, [])
+        self.assertEqual(gate["decision"], "stop")
+        self.assertEqual(len(gate["reasons"]), 1)
+        self.assertIn("10 posts", gate["guidance"])
+        self.assertNotIn("stayed silent", gate["guidance"])
+
+
 class EndToEnd(unittest.TestCase):
     """A full synthetic pain-search run against real files on disk."""
 

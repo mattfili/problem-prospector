@@ -168,14 +168,19 @@ def frequency_read(
         read = "medium"
         if communities <= 1:
             fired.append(
-                "echo-chamber cap high->medium (distinct_communities == 1) per §3.3 "
-                "correction 2, which this implementation reads as overriding the "
-                "medium threshold's >=2-community leg — see pain_rubric.frequency_read"
+                "frequency lowered from high to medium: every one of these posts "
+                "came from a single community. One community's shared vocabulary "
+                "clusters beautifully and tells you nothing about the wider world. "
+                "The pain may still be real — the cap is about your coverage, not "
+                "the problem. Add communities and re-capture to lift it"
             )
         else:
             fired.append(
-                f"community cap high->medium (distinct_communities {communities} < "
-                f"{thresholds['high']['distinct_communities']})"
+                f"frequency lowered from high to medium: these posts come from only "
+                f"{communities} communities and high needs "
+                f"{thresholds['high']['distinct_communities']} — breadth of "
+                "community bounds the level. Add communities and re-capture to "
+                "lift it"
             )
 
     # 1. Repetition-heavy: few authors relative to members.
@@ -183,8 +188,10 @@ def frequency_read(
         before, read = read, _demote(read)
         if before != read:
             fired.append(
-                f"repetition demotion {before}->{read} "
-                f"(distinct_authors/cluster_size {authors}/{size} < 0.4)"
+                f"frequency lowered from {before} to {read}: only {authors} of "
+                f"{size} posts have distinct authors — a few people repeating "
+                "themselves reads as volume but is not. Add sources or communities "
+                "and re-capture"
             )
 
     # 2. Engagement may promote medium->high only, and never on its own.
@@ -196,9 +203,10 @@ def frequency_read(
     ):
         read = "high"
         fired.append(
-            f"engagement-driven promotion medium->high "
-            f"(engagement_weighted {engagement} >= run top decile "
-            f"{round(engagement_decile_floor)}, distinct_communities {communities})"
+            f"frequency raised from medium to high: engagement on these posts "
+            f"({engagement}) is in this run's top tenth (floor "
+            f"{round(engagement_decile_floor)}) across {communities} communities — "
+            "informational, no action needed"
         )
 
     if read in ("medium", "low"):
@@ -292,9 +300,9 @@ def derive_intensity(
 
     if level == 3 and len(cost_two_plus) >= 2:
         notes.append(
-            "level 3 carried by the monotone reading of §3.3 (>=1 cost marker at >=2 "
-            f"distinct authors, not exactly one): {len(cost_two_plus)} cost markers "
-            "qualify but `complainer_is_buyer` is absent, so level 4 is not met"
+            f"scored 3: {len(cost_two_plus)} cost markers are each backed by two or "
+            "more different people — enough markers for level 4, but there is no "
+            "evidence the complainer is someone who could buy, so level 4 is not met"
         )
     if cost_thin and level <= 2:
         notes.append(
@@ -310,7 +318,11 @@ def derive_intensity(
             "(one articulate sufferer is a lead, not a market)"
         )
     if present and present <= {"profanity_urgency"} and level > 2:
-        notes.append(f"capped {level}->2: markers rest entirely on profanity_urgency")
+        notes.append(
+            f"intensity capped from {level} to 2: the only evidence of severity is "
+            "angry language. Swearing shows feeling, not cost — a higher score "
+            "needs a cost marker (money lost, time quantified, a workaround built)"
+        )
         level = 2
 
     missing = sorted(set(MARKERS) - present)

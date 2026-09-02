@@ -370,6 +370,16 @@ thin. It is diagnostic information, not garbage — mention it in the render hea
 
 ## 3.3 Gap 2 — Intensity, held strictly separate from frequency
 
+<!-- TODO(maintainer): two self-contradictions in this section force
+pain_rubric.py to encode a resolution, which pain_report.py then discloses
+under verbose=True. Fix the text so the disclosures stop being needed:
+1. The intensity ladder's level 3 says "exactly one cost marker" in one place
+   and ">=1 cost marker at >=2 distinct authors" in another; the code applies
+   the monotone (at-least-one) reading.
+2. distinct_communities is stated both as a level threshold (high needs >=3)
+   and as a cap-at-medium correction for single-community clusters — both
+   cannot hold; the code gives the explicit correction precedence. -->
+
 Two independent axes per cluster. **They are never merged into one number, not here,
 not on the card, not in the sort, not in prose.** "Signal strength 7/10" is banned
 vocabulary.

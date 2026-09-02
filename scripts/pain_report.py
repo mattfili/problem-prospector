@@ -34,8 +34,8 @@ from pain_stages import (
 #: Printed verbatim above the list, every time, including on a re-sort.
 SORT_KEY = (
     "intensity.score desc -> frequency.cluster_size desc "
-    "(pain-search sort: wtp and saturation are not researched at this stage, so the "
-    "CONTRACTS §4 default sort cannot be run yet)"
+    "(pain-search sort: willingness-to-pay and saturation are not researched at "
+    "this stage, so the full card ranking cannot run yet — informational)"
 )
 
 
@@ -124,7 +124,7 @@ def _card_block(card: dict, rank: int) -> list[str]:
     return lines
 
 
-def _header(slug: str, cards: list[dict], ranked: list[dict]) -> list[str]:
+def _header(slug: str, cards: list[dict], ranked: list[dict], verbose: bool = False) -> list[str]:
     """§3.8's header: sort key, counts, thresholds used, health, and the stop point."""
     inputs = read_json(run_dir(slug) / "inputs.json") or {}
     calibration = read_json(run_dir(slug) / "cards" / ".calibration.json") or {}
@@ -141,7 +141,10 @@ def _header(slug: str, cards: list[dict], ranked: list[dict]) -> list[str]:
         "",
         f"`{slug}` · {len(records)} evidence items across "
         f"{len([s for s, n in per_source.items() if n])} responding sources · "
-        f"cut_basis `{clusters.get('cut_basis')}`",
+        f"cut_basis `{clusters.get('cut_basis')}` — how tightly posts had to "
+        "resemble each other to group; `adaptive:pN` means the closest N% of "
+        "post pairs in this run counted as the same complaint, and a lower N "
+        "splits harder",
         "",
         f"**Sort key:** {SORT_KEY}",
         "",
@@ -155,10 +158,10 @@ def _header(slug: str, cards: list[dict], ranked: list[dict]) -> list[str]:
         f"high: {_threshold_line(thresholds.get('high'))} · "
         f"medium: {_threshold_line(thresholds.get('medium'))}"
         + (f" · scaled by {calibration.get('factor')} for a "
-           f"{calibration.get('total_items')}-item corpus (§3.3 calibrates for "
-           f"{rubric.CALIBRATION_RANGE[0]}-{rubric.CALIBRATION_RANGE[1]}; "
-           "distinct_communities never scales — it guards against an echo chamber, "
-           "not a volume shortfall)"
+           f"{calibration.get('total_items')}-item corpus (the rubric is "
+           f"calibrated for {rubric.CALIBRATION_RANGE[0]}-"
+           f"{rubric.CALIBRATION_RANGE[1]} items; the community count never "
+           "scales — it guards against an echo chamber, not a volume shortfall)"
            if calibration.get("scaled") else " · unscaled"),
         "",
         f"**Source health** — {_health_line(slug)}",
@@ -176,31 +179,36 @@ def _header(slug: str, cards: list[dict], ranked: list[dict]) -> list[str]:
         "---",
         "",
     ]
-    disclosures = _disclosures(cards)
+    # Rubric-interpretation disclosures are maintainer-facing; they render only
+    # on request so a user's report is not opened by an unactionable caveat.
+    disclosures = _disclosures(cards) if verbose else []
     if disclosures:
         # Insert ahead of the trailing "---" / "" that close the header.
         lines[-2:-2] = disclosures
     return lines
 
 
-#: Where §3.3 contradicts or under-specifies itself, `pain_rubric` resolves it and
-#: the resolution is printed. An encoded judgment nobody can see is the thing this
-#: pipeline exists to prevent, so these are disclosures, not footnotes.
+#: Where the written methodology contradicts or under-specifies itself,
+#: `pain_rubric` resolves it and the resolution can be printed. These are a
+#: maintainer's problem surfaced in a user's report, so they render only with
+#: `verbose=True`; the underlying contradictions are tracked as TODOs in the
+#: methodology skill. Markers match the note text `pain_rubric` writes now.
 DISCLOSURES = (
     (
-        "monotone reading",
-        "**Encoded rubric interpretation — the intensity ladder.** At least one score "
-        "was carried by the monotone reading of §3.3's level 3 (\">=1 cost marker at "
-        ">=2 distinct authors\", not \"exactly one\"). §3.3's ladder is not total as "
-        "written; `scripts/pain_rubric.py` documents the gap and the resolution.",
+        "enough markers for level 4",
+        "**Encoded rubric interpretation — the intensity ladder.** At least one "
+        "score was carried by this implementation's reading of level 3: \"at "
+        "least one cost marker backed by two or more people\", not \"exactly "
+        "one\". The written ladder is ambiguous there; `scripts/pain_rubric.py` "
+        "documents the gap and the resolution.",
     ),
     (
-        "correction 2",
+        "came from a single community",
         "**Encoded rubric interpretation — the community cap.** At least one "
-        "single-community cluster was capped at `medium` rather than collapsed to "
-        "`low`. §3.3 states `distinct_communities` both as a level threshold and as a "
-        "cap-at-medium correction, which cannot both hold; `pain_rubric.frequency_read` "
-        "gives the explicit correction precedence and says why.",
+        "single-community cluster was capped at `medium` rather than collapsed "
+        "to `low`. The written rubric states the community count both as a "
+        "level threshold and as a cap-at-medium correction, which cannot both "
+        "hold; the encoded rubric gives the explicit correction precedence.",
     ),
 )
 
@@ -218,18 +226,19 @@ def _disclosures(cards: list[dict]) -> list[str]:
     return lines
 
 
-def render_report(slug: str) -> dict:
+def render_report(slug: str, verbose: bool = False) -> dict:
     """Write `runs/<slug>/pain-clusters.md` and return what it contains.
 
     Renders whatever is on disk. A gate-passing cluster with no intensity panel is
     listed in its own section rather than quietly left out — an unscored cluster
-    and a low-scoring one are different findings.
+    and a low-scoring one are different findings. `verbose=True` additionally
+    prints the rubric-interpretation disclosures, which are maintainer-facing.
     """
     cards = _cards(slug)
     if not cards:
         return {"ok": False, "error": f"no cards in runs/{slug}/cards — cluster first"}
     ranked = _sorted_ranked(cards)
-    lines = _header(slug, cards, ranked)
+    lines = _header(slug, cards, ranked, verbose=verbose)
 
     for rank, card in enumerate(ranked, start=1):
         lines += _card_block(card, rank)
@@ -267,10 +276,12 @@ def render_report(slug: str) -> dict:
         "",
         "## Where this stops",
         "",
-        f"This is a pain-search run: §3.0-§3.3 complete, §3.3b onward not started. "
+        "This is a pain-search run: capture, clustering, the inventory gate and "
+        "scoring are complete; the paid analysis half (willingness-to-pay, "
+        "skeptic, trend reconstruction) has not started. "
         f"`/prospect \"{(read_json(run_dir(slug) / 'inputs.json') or {}).get('inspiration', '')}\"` "
-        "resumes this same run at Stage 3.5 and will not re-capture — evidence is "
-        "append-only and every gate below Stage 3.5 already holds.",
+        "resumes this same run without re-capturing — evidence is append-only "
+        "and every completed gate already holds.",
         "",
     ]
     path = run_dir(slug) / "pain-clusters.md"
@@ -352,5 +363,6 @@ def run_status(slug: str) -> dict:
     return {
         **state, "stage": "3 complete — pain search done",
         "next": f"nothing here. `/prospect \"{inputs.get('inspiration')}\"` resumes this "
-                "run at Stage 3.5 (analysis-pool cap, then wtp/skeptic/retro_trend).",
+                "run where pain-search stops: capping the analysis pool, then "
+                "willingness-to-pay, skeptic and trend research.",
     }

@@ -308,8 +308,8 @@ def ingest_records(
         return {
             "ok": False, "staged": 0, "rejected": rejected,
             "error": f"{len(rejected)} of {len(records or [])} record(s) failed the "
-                     "CONTRACTS §2 check; nothing was staged. Fix or drop each one and "
-                     "call again.",
+                     "evidence-shape check; nothing was staged. Each rejection names "
+                     "its field and problem — fix or drop each one and call again.",
         }
     if not prepared:
         append_health(slug, [{
@@ -351,7 +351,8 @@ def record_source_decision(
     if status not in DECISION_STATUSES:
         return {"ok": False, "error": f"status must be one of {DECISION_STATUSES}"}
     if source not in EVIDENCE_SOURCES:
-        return {"ok": False, "error": f"{source!r} is outside the CONTRACTS §2 enum"}
+        return {"ok": False, "error": f"{source!r} is not a recognised source; "
+                                      f"valid sources are: {sorted(EVIDENCE_SOURCES)}"}
     entry = {
         "source": source, "status": status, "fallback": None,
         "detail": f"cell {cell_id}: {reason}",

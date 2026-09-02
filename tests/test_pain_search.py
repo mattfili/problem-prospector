@@ -94,32 +94,32 @@ class FrequencyRubric(unittest.TestCase):
                    "distinct_communities": 4, "engagement_sum": 10}
         read, note = rubric.frequency_read(cluster, self.thresholds, None)
         self.assertEqual(read, "medium")
-        self.assertIn("repetition demotion", note)
+        self.assertIn("repeating themselves", note)
 
     def test_single_community_caps_at_medium_not_low(self) -> None:
-        # The disclosed reading: §3.3 correction 2 overrides the medium threshold's
-        # two-community leg, so a broad single-subreddit pain caps rather than collapses.
+        # The disclosed reading: the explicit cap-at-medium correction overrides the
+        # medium threshold's two-community leg, so a broad single-subreddit pain
+        # caps rather than collapses.
         cluster = {"member_count": 47, "distinct_authors": 39,
                    "distinct_communities": 1, "engagement_sum": 10}
         read, note = rubric.frequency_read(cluster, self.thresholds, None)
         self.assertEqual(read, "medium")
-        self.assertIn("echo-chamber cap", note)
-        self.assertIn("correction 2", note)
+        self.assertIn("came from a single community", note)
 
     def test_two_communities_cap_at_medium_without_the_echo_wording(self) -> None:
         cluster = {"member_count": 47, "distinct_authors": 39,
                    "distinct_communities": 2, "engagement_sum": 10}
         read, note = rubric.frequency_read(cluster, self.thresholds, None)
         self.assertEqual(read, "medium")
-        self.assertIn("community cap", note)
-        self.assertNotIn("echo-chamber", note)
+        self.assertIn("come from only", note)
+        self.assertNotIn("single community", note)
 
     def test_engagement_promotes_medium_only_with_three_communities(self) -> None:
         cluster = {"member_count": 10, "distinct_authors": 8,
                    "distinct_communities": 3, "engagement_sum": 9000}
         read, note = rubric.frequency_read(cluster, self.thresholds, 5000)
         self.assertEqual(read, "high")
-        self.assertIn("engagement-driven promotion", note)
+        self.assertIn("frequency raised from medium to high", note)
 
     def test_engagement_never_promotes_out_of_low(self) -> None:
         cluster = {"member_count": 3, "distinct_authors": 3,
@@ -166,7 +166,7 @@ class IntensityRubric(unittest.TestCase):
     def test_paid_pain_needs_buyer(self) -> None:
         without = self.derive({"money_loss": ["a", "b"], "time_quantified": ["c", "d"]})
         self.assertEqual(without["score"], 3)
-        self.assertIn("monotone reading", without["note"])
+        self.assertIn("enough markers for level 4", without["note"])
         with_buyer = self.derive({"money_loss": ["a", "b"], "time_quantified": ["c", "d"],
                                   "complainer_is_buyer": ["a"]})
         self.assertEqual(with_buyer["score"], 4)
@@ -531,7 +531,7 @@ class EndToEnd(unittest.TestCase):
         self.assertIn("verbatim", reasons["money_loss"])
         self.assertIn("only in case", reasons["time_quantified"])
         self.assertIn("not a member", reasons["workaround_built"])
-        self.assertIn("caps an exemplar", reasons["abandonment"])
+        self.assertIn("the cap is", reasons["abandonment"])
         self.assertIsNone(
             pain_stages.read_json(self.directory / "cards" / f"{cluster_id}.json")["intensity"])
 
@@ -559,9 +559,9 @@ class EndToEnd(unittest.TestCase):
         )
         self.assertTrue(result["ok"], result)
         # Two cost markers at >=2 distinct authors but no buyer marker: level 3,
-        # carried by the disclosed monotone reading of the ladder.
+        # carried by the disclosed at-least-one reading of the ladder.
         self.assertEqual(result["score"], 3)
-        self.assertIn("monotone reading", result["note"])
+        self.assertIn("enough markers for level 4", result["note"])
         card = pain_stages.read_json(self.directory / "cards" / f"{cluster_id}.json")
         self.assertEqual(card["intensity"]["read"], "medium")
         self.assertEqual(card["quadrant"],
@@ -581,7 +581,13 @@ class EndToEnd(unittest.TestCase):
         self.assertIn("**Sort key:**", text)
         self.assertIn("Frequency thresholds used", text)
         self.assertIn("Source health", text)
-        self.assertIn("monotone reading", text)
+        # Rubric-interpretation disclosures are maintainer-facing: absent from the
+        # default report, present with verbose=True.
+        self.assertNotIn("Encoded rubric interpretation", text)
+        verbose = pain_report.render_report(TEST_SLUG, verbose=True)
+        self.assertIn("Encoded rubric interpretation",
+                      Path(verbose["path"]).read_text(encoding="utf-8"))
+        pain_report.render_report(TEST_SLUG)  # restore the default rendering
         for banned in ("opportunity score", "signal strength", "weighted sum"):
             self.assertNotIn(banned, text.lower())
 
@@ -604,7 +610,7 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(rendered["unscored"], 0)
         status = pain_report.run_status(TEST_SLUG)
         self.assertIn("3 complete", status["stage"])
-        self.assertIn("resumes this run at Stage 3.5", status["next"])
+        self.assertIn("resumes this run where pain-search stops", status["next"])
 
     def test_15_recluster_refuses_without_reseed(self) -> None:
         result = pain_cards.cluster_and_seed_cards(TEST_SLUG, percentile=15)

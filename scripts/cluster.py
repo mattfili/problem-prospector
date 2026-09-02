@@ -1209,8 +1209,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         prog="cluster.py",
         description=(
-            "Dedup and cluster captured evidence (CONTRACTS §2 JSONL) into "
-            "clusters.json (CONTRACTS §3). After this runs, the cluster is the "
+            "Dedup and cluster captured evidence (the JSONL the capture stage "
+            "wrote) into clusters.json. After this runs, the cluster is the "
             "unit of analysis, never the raw post. The cosine cut is derived "
             "from the pool's own pairwise-distance distribution, because a "
             "fixed threshold does not transfer across embedding models."

@@ -229,7 +229,12 @@ def validate_matrix(matrix: list[dict]) -> list[str]:
     """
     problems: list[str] = []
     if not 6 <= len(matrix) <= 12:
-        problems.append(f"matrix holds {len(matrix)} cells; §3.0 requires 6-12")
+        problems.append(
+            f"your frame has {len(matrix)} search angles; this stage takes 6-12 — "
+            "fewer than 6 and you only find what you already suspected, more than 12 "
+            "and capture takes longer than reading the result. Drop some, or split "
+            "into two runs"
+        )
     seen: set[str] = set()
     for index, cell in enumerate(matrix):
         label = cell.get("cell_id") or f"[{index}]"
@@ -238,7 +243,11 @@ def validate_matrix(matrix: list[dict]) -> list[str]:
                 problems.append(f"cell {label}: {field} is empty")
         queries = cell.get("queries") or []
         if not 3 <= len(queries) <= 6:
-            problems.append(f"cell {label}: {len(queries)} queries; §3.0 wants 3-6")
+            problems.append(
+                f"cell {label}: {len(queries)} queries; each search angle takes 3-6 — "
+                "fewer misses phrasings, more mostly re-finds the same posts. Adjust "
+                "and resubmit"
+            )
         if any(not str(q or "").strip() for q in queries):
             problems.append(f"cell {label}: an empty query string")
         cid = cell.get("cell_id")
@@ -246,7 +255,7 @@ def validate_matrix(matrix: list[dict]) -> list[str]:
             problems.append(f"duplicate cell_id {cid}")
         seen.add(cid)
         if not re.fullmatch(r"[a-z]\d{2}", str(cid or "")):
-            problems.append(f"cell_id {cid!r} must match <letter><2 digits>, e.g. m01")
+            problems.append(f"cell id {cid!r} must match <letter><2 digits>, e.g. m01")
     return problems
 
 
@@ -506,7 +515,8 @@ def capture_gate(slug: str, record: bool = True) -> dict:
         append_health(slug, [{
             "source": "capture", "status": "stopped", "fallback": None,
             "detail": "thin-capture gate: " + "; ".join(reasons)
-                      + "; needs a wider matrix or complainer-vocabulary queries",
+                      + "; needs more search angles or queries phrased the way "
+                        "people actually vent",
         }])
     return {
         "decision": decision, "reasons": reasons, "total_items": len(records),
@@ -517,9 +527,14 @@ def capture_gate(slug: str, record: bool = True) -> dict:
         "zero_result": [v for k, v in by_status.items() if k.startswith("searched-no-")
                         for v in ([v] if isinstance(v, str) else v)],
         "guidance": (
-            "Do not cluster. Widen the matrix or revise queries into complainer "
-            "vocabulary, then capture again. A source that failed is never reported "
-            "as 'no discussion found'." if decision == "stop" else
+            f"Stopping: {len(records)} posts from {len(responding)} sources. Below "
+            f"~{THIN_CAPTURE_MIN_ITEMS} posts a group of 2 looks identical to a "
+            "group of 40 in the report, which is how one loud thread becomes a "
+            "\"market\". Two fixes: add search angles, or rewrite queries the way "
+            "someone venting at 11pm would phrase them — \"permit system "
+            "nightmare\", not \"municipal workflow inefficiency\". Then capture "
+            "again. A source that failed is never reported as 'no discussion "
+            "found'." if decision == "stop" else
             "Gate holds — cluster next."
         ),
     }

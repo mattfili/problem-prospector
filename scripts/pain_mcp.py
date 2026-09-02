@@ -416,7 +416,7 @@ def pain_score_intensity(
 
 
 @mcp.tool()
-def pain_report(slug: str) -> dict:
+def pain_report(slug: str, verbose: bool = False) -> dict:
     """Render `runs/<slug>/pain-clusters.md` — the pain-search report.
 
     Prints the active sort key verbatim, the counts, the frequency thresholds
@@ -429,9 +429,10 @@ def pain_report(slug: str) -> dict:
     two axes stay separate because their combination is the finding: high
     frequency with low intensity is a content play rather than a product, and high
     intensity with no proven buyer is a sad hobby. This is the last tool of a
-    pain-search run.
+    pain-search run. `verbose=True` additionally prints the maintainer-facing
+    rubric-interpretation disclosures.
     """
-    return report_stage.render_report(slug)
+    return report_stage.render_report(slug, verbose=verbose)
 
 
 if __name__ == "__main__":

@@ -66,8 +66,10 @@ def _validate_entry(entry: dict, marker: str, index: dict[str, dict]) -> dict:
     if not quote:
         problem = "empty quote"
     elif rubric.word_count(quote) > rubric.MAX_EXEMPLAR_WORDS:
-        problem = (f"{rubric.word_count(quote)} words; §3.3 caps an exemplar at "
-                   f"{rubric.MAX_EXEMPLAR_WORDS}")
+        problem = (f"quote is {rubric.word_count(quote)} words; the cap is "
+                   f"{rubric.MAX_EXEMPLAR_WORDS}. A long quote stops being evidence "
+                   "for one specific marker and starts being a paragraph that "
+                   "mentions it — trim to the phrase that proves the marker")
     elif not url.startswith("http"):
         problem = "url must be a real resolvable permalink from the captured evidence"
     else:
@@ -83,7 +85,8 @@ def _validate_entry(entry: dict, marker: str, index: dict[str, dict]) -> dict:
             if needle not in haystack:
                 lowered = needle.lower() in haystack.lower()
                 problem = (
-                    "quote differs from the source only in case — §3.3 requires verbatim"
+                    "quote differs from the source only in case — quotes must match "
+                    "the captured text exactly, or they are not citable"
                     if lowered else
                     "quote does not appear verbatim in the captured title/text of that "
                     "record; paraphrase and ellipsis-stitched fragments are not citable"
@@ -182,14 +185,15 @@ def score_intensity(
     """
     unknown = sorted(set(marker_evidence) - set(rubric.MARKERS))
     if unknown:
-        return {"ok": False, "error": f"unknown marker(s) {unknown}; §3.3 has exactly "
-                                     f"these six: {list(rubric.MARKERS)}"}
+        return {"ok": False, "error": f"unknown marker(s) {unknown}; the rubric has "
+                                     f"exactly these six: {list(rubric.MARKERS)}"}
 
     path, card = load_card(slug, cluster_id)
     verdict = (card.get("inventory_gate") or {}).get("verdict")
     if verdict is None:
         return {"ok": False, "error": "set the inventory gate on this cluster first — "
-                                      "§3.7 is applied at every promotion point"}
+                                      "every promotion point re-checks it so excluded "
+                                      "businesses never absorb paid analysis"}
     if verdict == "exclude":
         return {"ok": False, "error": f"{cluster_id} was excluded at the inventory gate; "
                                       "excluded cards keep a null intensity panel by design"}

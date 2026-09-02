@@ -74,9 +74,9 @@ Run in order on the candidate as currently written. First trigger wins; stop.
 
 | # | Question | If yes |
 |---|---|---|
-| G1 | Does our entity take legal **title** to a physical good it later transfers? | EXCLUDE |
+| G1 | Does our entity take legal **title** to a physical good it later transfers — including title that passes through us for an instant at the moment of sale, as it does for any merchant of record? | EXCLUDE |
 | G2 | Do we ever **possess** a physical good — receive, store, pick, pack, ship, inspect, authenticate, refurbish — even without title? | EXCLUDE |
-| G3 | Does each incremental unit of revenue oblige us to **buy, make, or move a physical item**? | EXCLUDE |
+| G3 | Does each incremental unit of revenue oblige us to **buy, make, or move a physical item** — where "move" includes a third party moving it on our behalf, as a drop-ship supplier does? | EXCLUDE |
 | G4 | Is a **device** part of what the customer must buy/receive/install/replace/RMA from us or from a partner whose RMA we own? | EXCLUDE |
 | G5 | Does the offering require us to **deploy or maintain equipment in the field** to function? | EXCLUDE |
 | G6 | Did G1–G5 fire only through a third party? Apply the four-part passthrough clause above. | ALL four hold → continue; else EXCLUDE |
@@ -141,6 +141,16 @@ Every agent that touches a candidate writes CONTRACTS §4 `inventory_gate` — b
 
 ```json
 "inventory_gate": {"verdict": "exclude", "flags": ["excluded: G4 — offering ships a LoRa sensor the customer installs and RMAs"]}
+```
+
+One clause of why is the *floor*, not the standard. It suffices when the trigger
+is self-evident, as above. When the trigger is counter-intuitive — the reader
+believes the rule is about warehouses and they don't have one — the reason must
+carry the argument that changes their mind, or the ruling reads as a
+misunderstanding of their business. The standard for that case:
+
+```json
+"inventory_gate": {"verdict": "exclude", "flags": ["excluded: G1 — this business would sell physical goods. Dropshipping and print-on-demand count even with an empty warehouse: as merchant of record you take title at the moment of sale and own the refund, the chargeback and the damaged-in-transit claim. The test is not 'do I have a warehouse', it is 'if the item is lost, is it my problem?' Selling software TO people who ship goods is a different candidate — rewrite it and re-run."]}
 ```
 
 Recording rules:

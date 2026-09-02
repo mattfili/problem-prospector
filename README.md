@@ -16,9 +16,15 @@ Two constraints hold everywhere:
 locally. Every data source is public and unauthenticated. You can run this on a
 fresh machine with nothing configured.
 
-**No inventory.** Anything requiring physical stock, warehousing, fulfillment, or
-per-unit COGS on goods is excluded *at the gate* — not down-ranked into a top-5
-list on the strength of a loud pain signal.
+**No inventory.** The gate asks one question: if the item is lost, damaged, or
+the buyer wants their money back, is it *our* problem? If yes, the business is
+excluded *at the gate*, before it is scored — not down-ranked into a top-5 list
+on the strength of a loud pain signal. That covers holding stock, but it also
+covers dropshipping and print-on-demand with an empty warehouse: as merchant of
+record you take title at the moment of sale and own the refund and the
+chargeback. Selling software *to* people who ship goods is a different business
+and passes cleanly. The full decision ladder lives in
+`skills/no-inventory-gate`.
 
 ## The one design rule
 

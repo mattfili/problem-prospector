@@ -546,6 +546,14 @@ class EndToEnd(unittest.TestCase):
         self.assertIsNone(card["intensity"])
         self.assertIn("saturation", card)
         self.assertIsNone(card["inventory_gate"]["verdict"])
+        # The shape fields a reader needs to spot merged pains, and proof the
+        # per-run embedding cache was used (a re-cluster then skips embedding).
+        self.assertIsNotNone(result["largest_cluster_share"])
+        self.assertEqual(result["largest_cluster_sizes"][0], result["cards"][0]["cluster_size"])
+        self.assertIn("fusion_advisory", result)
+        self.assertEqual(result["embedding_cache"], "miss")
+        again = pain_cards.cluster_and_seed_cards(TEST_SLUG, percentile=25, reseed=True)
+        self.assertEqual(again["embedding_cache"], "hit")
 
     def test_07_intensity_refuses_before_the_gate(self) -> None:
         cluster_id = self.first_cluster()
@@ -629,6 +637,7 @@ class EndToEnd(unittest.TestCase):
         self.assertIn("**Sort key:**", text)
         self.assertIn("Frequency thresholds used", text)
         self.assertIn("Source health", text)
+        self.assertIn("**Clustering shape** — the largest cluster holds", text)
         # Rubric-interpretation disclosures are maintainer-facing: absent from the
         # default report, present with verbose=True.
         self.assertNotIn("Encoded rubric interpretation", text)

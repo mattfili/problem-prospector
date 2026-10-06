@@ -321,6 +321,24 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+section "offline: clustering at scale"
+# ---------------------------------------------------------------------------
+# The numpy path that handles 3k-10k items must give the same clusters as the
+# pure-Python path every earlier run used, or every cut_basis a reader compares
+# across runs silently changes meaning. Also covers the embedding cache and the
+# memory guard. The 8k-item timing run is opt-in (PROSPECTOR_SLOW_TESTS=1).
+if [ -f tests/test_cluster_scale.py ]; then
+  if out="$(uv run --quiet tests/test_cluster_scale.py 2>&1)"; then
+    ok "cluster scale path ($(echo "$out" | grep -oE 'Ran [0-9]+ tests' | head -1); same labels as pure path)"
+  else
+    bad "cluster scale path" \
+        "$(echo "$out" | grep -E '^(FAIL|ERROR|AssertionError)' | head -3 | tr '\n' ' ')"
+  fi
+else
+  skip "cluster scale path"
+fi
+
+# ---------------------------------------------------------------------------
 section "offline: pain-search stages"
 # ---------------------------------------------------------------------------
 # The §3.3 rubric as code plus a synthetic end-to-end walk (frame -> merge ->

@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --quiet --script
 # /// script
 # requires-python = ">=3.11,<3.13"
-# dependencies = ["fastembed", "scikit-learn", "numpy"]
+# dependencies = ["fastembed", "scikit-learn", "numpy", "scipy"]
 # ///
 """
 cluster.py — the dedup + clustering engine. CONTRACTS §2 in, CONTRACTS §3 out.
@@ -34,11 +34,14 @@ THE ONE HARD-WON LESSON (inherited from the Armsreach divergence engine)
     because every item was captured against one inspiration:
     tests/fixtures/evidence-sample.jsonl spans only 0.118-0.494 under bge
     (p35 = 0.362, p75 = 0.405). In a band that narrow p35 can fuse
-    adjacent-but-distinct pains, so `fusion_advisory()` warns on stderr when a
-    cluster is wider inside than the pool's typical unrelated pair, or when one
-    cluster swallows over a third of the pool — the reader then re-runs at a
-    lower `--percentile` (10-25). Reporting the tension is the design; hiding
-    it behind a hardcoded constant is what this whole approach rejects.
+    adjacent-but-distinct pains, so `fusion_advisory()` warns (on stderr and
+    in the payload) when a cluster is wider inside than the pool's typical
+    unrelated pair, or when one cluster holds over 15% of a pool of 1,000+
+    items (35% below that) — the
+    reader then re-runs at a lower `--percentile` (10-25 for a few hundred
+    items; 5-10 at several thousand, where average linkage chains harder).
+    Reporting the tension is the design; hiding it behind a hardcoded
+    constant is what this whole approach rejects.
 
 KEY-FREE BY CONSTRUCTION
     The Armsreach original shipped `openai` and `composio` embedding backends.
@@ -48,6 +51,17 @@ KEY-FREE BY CONSTRUCTION
     proxy) for boxes where fastembed cannot install. The only network touch in
     this whole script is fastembed's one-time model download into its own
     cache; there is no HTTP client here and nothing to rate-limit.
+
+SCALE
+    Real frames now produce 6-9k evidence items, not the few hundred this was
+    first written for. Whenever numpy imports, clustering runs through
+    `cluster_scale.py` — the same arithmetic on arrays, held to the same labels
+    and cut by tests/test_cluster_scale.py — and the pure-Python code here is
+    the fallback for a box without numpy. Embeddings can be cached per run
+    (`--embedding-cache-dir`), because re-clustering at a new `--percentile`
+    is the documented workflow and re-embedding 6,800 items took ~45 minutes.
+    Pools past `PROSPECTOR_CLUSTER_MAX_ITEMS` (default 15,000) are refused up
+    front with the memory estimate, rather than dying silently mid-run.
 
 REUSED DOWNSTREAM — import, do not copy
     `embed()`, `cosine_distance()`, `centroid()` and `centroid_distance()` are
@@ -69,6 +83,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
 import math
@@ -78,7 +93,9 @@ import sys
 import time
 import traceback
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
+
+import cluster_scale as scale
 
 # bge-small truncates its input at 512 tokens (~2000 characters), so text past
 # that boundary cannot influence the vector no matter what we pass. Truncating
@@ -133,22 +150,30 @@ def _embed_offline_one(text: str) -> list[float]:
     return [x / norm for x in vec]
 
 
-def _embed_fastembed(texts: Sequence[str]) -> list[list[float]]:
-    """Local ONNX embeddings via fastembed. No key, no PyTorch, no server.
+def _fastembed_batch_embedder() -> Callable[[Sequence[str]], list]:
+    """Build the fastembed model once; return a function embedding one batch.
 
     bge-small-en-v1.5 is 384-dim, ~130MB, cached after the first download, and
     fastembed already L2-normalizes its output, so the vectors are ready for
-    cosine work as returned.
+    cosine work as returned. Each returned vector is a float32 numpy array.
     """
     # Lazy import so `--backend offline` works with the package absent.
     from fastembed import TextEmbedding
 
     # fastembed's own default (256) batches enough text through ONNX at once
-    # to OOM on a normal-sized evidence corpus (~1000 records) on a fresh
-    # machine. Keep it low by default; override for a bigger box.
-    batch_size = int(os.environ.get("PROSPECTOR_EMBED_BATCH_SIZE", "16"))
-    model = TextEmbedding(model_name=FASTEMBED_MODEL_NAME)
-    return [vec.tolist() for vec in model.embed(list(texts), batch_size=batch_size)]
+    # to OOM on a ~1000-record corpus on a fresh machine. 32 held at 9,133
+    # items on an 8 GB box (observed 2026-10-06); batch memory does not grow
+    # with corpus size. Override for a bigger or smaller box.
+    batch_size = int(os.environ.get("PROSPECTOR_EMBED_BATCH_SIZE", "32"))
+    # ONNX otherwise picks its own thread count; observed using 2 of the
+    # available cores, which made a 6,800-item corpus take ~45 minutes.
+    model = TextEmbedding(model_name=FASTEMBED_MODEL_NAME, threads=os.cpu_count())
+    return lambda texts: list(model.embed(list(texts), batch_size=batch_size))
+
+
+def _embed_fastembed(texts: Sequence[str]) -> list[list[float]]:
+    """Local ONNX embeddings via fastembed. No key, no PyTorch, no server."""
+    return [vec.tolist() for vec in _fastembed_batch_embedder()(texts)]
 
 
 def embed(texts: Sequence[str], backend: str = "fastembed") -> list[list[float]]:
@@ -169,13 +194,84 @@ def embed(texts: Sequence[str], backend: str = "fastembed") -> list[list[float]]
 
 
 def model_name_for(backend: str) -> str:
+    """The recorded model name for a backend — what clusters.json reports."""
     return FASTEMBED_MODEL_NAME if backend == "fastembed" else OFFLINE_MODEL_NAME
+
+
+#: Vectors embedded between cache checkpoints. A run killed mid-embedding (a
+#: timeout, a closed laptop) keeps everything up to the last checkpoint.
+EMBED_CHECKPOINT = 1024
+
+
+def cache_file_for(cache_dir: str | Path, backend: str) -> Path:
+    """One cache file per model, so a fastembed failure that falls back to the
+    offline backend can never overwrite the fastembed vectors already paid for."""
+    slug = re.sub(r"[^a-z0-9]+", "-", model_name_for(backend).lower()).strip("-")
+    return Path(cache_dir).expanduser() / f"embeddings-{slug}.npz"
+
+
+def _batch_embedder(backend: str) -> Callable[[Sequence[str]], list]:
+    """A function embedding one batch of texts with `backend`."""
+    if backend == "fastembed":
+        return _fastembed_batch_embedder()
+    if backend == "offline":
+        return lambda texts: [_embed_offline_one(t) for t in texts]
+    raise ValueError(f"unknown backend '{backend}'. choose from: fastembed, offline")
+
+
+def embed_for_run(
+    texts: Sequence[str], backend: str, cache_dir: str | Path | None
+) -> tuple[Any, str]:
+    """Embed `texts` for clustering, reusing a per-run cache when given one.
+
+    Returns (vectors, cache_status). Vectors are a float64 numpy array when
+    numpy imports (so the scale path can use them directly) and lists of
+    floats otherwise. cache_status is `hit` (nothing embedded), `miss`
+    (nothing reused), `partial: R of N reused`, or `off` with the reason.
+    New vectors are checkpointed every EMBED_CHECKPOINT items.
+    """
+    np = scale.numpy_or_none()
+    if np is None:
+        return embed(texts, backend), "off: numpy unavailable"
+    if cache_dir is None:
+        return scale.as_matrix(embed(texts, backend)), "off: no cache directory given"
+
+    cache = scale.EmbeddingCache(cache_file_for(cache_dir, backend), model_name_for(backend))
+    if cache.ignored_reason:
+        log(f"[cluster] embedding cache ignored: {cache.ignored_reason}")
+    keys = [scale.text_key(t) for t in texts]
+    # Identical texts share one vector; embed each distinct missing text once.
+    first_missing: dict[bytes, int] = {}
+    for i, key in enumerate(keys):
+        if cache.get(key) is None:
+            first_missing.setdefault(key, i)
+    todo = list(first_missing.items())
+    reused = len(keys) - sum(1 for k in keys if k in first_missing)
+
+    if todo:
+        embed_batch = _batch_embedder(backend)
+        for start in range(0, len(todo), EMBED_CHECKPOINT):
+            chunk = todo[start:start + EMBED_CHECKPOINT]
+            vectors = embed_batch([texts[i] for _, i in chunk])
+            cache.add([k for k, _ in chunk], [np.asarray(v) for v in vectors])
+            cache.save()
+            log(f"[cluster] embedded {min(start + EMBED_CHECKPOINT, len(todo))}/{len(todo)} "
+                f"new texts; checkpointed to {cache.path}")
+
+    matrix = np.stack([cache.get(k) for k in keys]).astype(np.float64)
+    if not todo:
+        status = "hit"
+    elif reused == 0:
+        status = "miss"
+    else:
+        status = f"partial: {reused} of {len(texts)} reused"
+    return matrix, status
 
 
 # --------------------------------------------------------------------------
 # Geometry. All backends return L2-normalized vectors, so cosine similarity is
 # the plain dot product and cosine distance is 1 - dot. Kept in pure Python so
-# the offline path needs no numpy.
+# a box without numpy still clusters; cluster_scale.py is the array version.
 # --------------------------------------------------------------------------
 
 def cosine_distance(a: Sequence[float], b: Sequence[float]) -> float:
@@ -217,8 +313,13 @@ def centroid_distance(
 
 
 def pairwise_matrix(vectors: Sequence[Sequence[float]]) -> list[list[float]]:
-    """Full symmetric cosine-distance matrix. O(n^2) in memory; the evidence
-    pools this runs on are hundreds of items, not millions."""
+    """Full symmetric cosine-distance matrix as Python lists.
+
+    O(n^2) boxed floats: fine for a few hundred items, fatal at 9,000 (~83M
+    floats, observed killing an 8 GB box). cluster_vectors() only uses this
+    when numpy is missing; with numpy, cluster_scale.condensed_distances()
+    builds the upper triangle as an array, a block of rows at a time.
+    """
     n = len(vectors)
     dist = [[0.0] * n for _ in range(n)]
     for i in range(n):
@@ -244,17 +345,15 @@ def percentile(values: Sequence[float], pct: float) -> float:
     END, so p-5 returned a near-MAXIMUM distance and produced a one-cluster
     collapse labelled `adaptive:p-5` as if it were a real calibration.
     """
+    _check_pct(pct)
+    ordered = sorted(values)
+    return scale.interpolate_sorted(ordered.__getitem__, len(ordered), pct)
+
+
+def _check_pct(pct: float) -> None:
+    """Reject a percentile outside [0, 100] — see percentile() for why."""
     if not math.isfinite(pct) or not 0.0 <= pct <= 100.0:
         raise ValueError(f"percentile must be within [0, 100], got {pct!r}")
-    if not values:
-        return 0.0
-    ordered = sorted(values)
-    rank = (pct / 100.0) * (len(ordered) - 1)
-    low, high = math.floor(rank), math.ceil(rank)
-    if low == high:
-        return ordered[int(low)]
-    lo, hi = ordered[int(low)], ordered[int(high)]
-    return lo + (hi - lo) * (rank - low)
 
 
 def adaptive_cut(dist: Sequence[Sequence[float]], pct: float) -> float:
@@ -299,12 +398,12 @@ def _labels_hdbscan(
     HDBSCAN — `auto` prefers the deterministic adaptive cut over an
     uncalibrated density run. Returns None when no usable implementation ran.
     """
-    matrix = [list(row) for row in dist]
-    try:
-        import numpy as np
-    except ImportError:
+    np = scale.numpy_or_none()
+    if np is None:
         return None
-    arr = np.array(matrix, dtype="float64")
+    # asarray, never a list copy: at 9,000 items each copy of the matrix is
+    # ~83M boxed floats, and three of them killed an 8 GB box.
+    arr = np.asarray(dist, dtype="float64")
     size = max(2, min_cluster_size)
 
     try:
@@ -359,9 +458,11 @@ def _labels_agglomerative(
 
     Uses sklearn when available; otherwise a pure-Python Lance-Williams merge
     so the offline backend needs no scientific stack at all. Same answer, worse
-    asymptotics (O(n^3)), which is acceptable for evidence-sized pools.
+    asymptotics (O(n^3)), which is acceptable for evidence-sized pools. Only
+    reached on the pure path — the scale path builds the same tree with scipy
+    in cluster_scale.average_linkage().
     """
-    matrix = [list(row) for row in dist]
+    matrix = dist
     try:
         import numpy as np
         from sklearn.cluster import AgglomerativeClustering
@@ -372,7 +473,7 @@ def _labels_agglomerative(
             metric="precomputed",
             linkage="average",
         )
-        labels = model.fit_predict(np.array(matrix, dtype="float64"))
+        labels = model.fit_predict(np.asarray(matrix, dtype="float64"))
         return labels.tolist(), "agglomerative-average"
     except ImportError:
         pass
@@ -413,18 +514,44 @@ def _labels_agglomerative(
     return labels, "agglomerative-average-purepython"
 
 
+#: Percentiles the scale path re-cuts the linkage tree at, so a fusion advisory
+#: can say which lower percentile would actually split a dominant cluster.
+PROBE_PERCENTILES = (25.0, 15.0, 10.0, 5.0)
+
+
+def _hdbscan_installed() -> bool:
+    """Whether the standalone hdbscan package is importable (without importing it)."""
+    import importlib.util
+
+    return importlib.util.find_spec("hdbscan") is not None
+
+
+def _resolve_cut(
+    pct: float, distance_threshold: float | None, adaptive: Callable[[float], float]
+) -> tuple[float, str]:
+    """(cut, cut_basis): the fixed threshold if given, else the adaptive one."""
+    if distance_threshold is not None:
+        return float(distance_threshold), f"fixed:{float(distance_threshold)}"
+    return max(adaptive(pct), 1e-6), f"adaptive:p{pct:g}"
+
+
 def cluster_vectors(
     vectors: Sequence[Sequence[float]],
     algorithm: str = "auto",
     pct: float = 35.0,
     distance_threshold: float | None = None,
     min_cluster_size: int = 2,
+    dense: bool | None = None,
 ) -> dict[str, Any]:
     """Label `vectors`. Returns labels (-1 = unclustered) plus how it got there.
 
     `distance_threshold` overrides the adaptive cut with a fixed cosine
     distance — available for reproducing an old run, not recommended for new
     ones (see the module docstring on why fixed cuts do not transfer).
+
+    `dense` picks the path: None (default) uses the numpy scale path whenever
+    numpy imports; False forces the pure-Python path. Both give the same
+    labels — the switch exists so tests can prove that.
     """
     n = len(vectors)
     if n == 0:
@@ -436,14 +563,15 @@ def cluster_vectors(
             "cut": None,
             "cut_basis": "n/a:single-item-pool",
         }
+    if dense is None:
+        dense = scale.numpy_or_none() is not None
+    if dense:
+        return _cluster_vectors_dense(
+            vectors, algorithm, pct, distance_threshold, min_cluster_size
+        )
 
     dist = pairwise_matrix(vectors)
-    if distance_threshold is not None:
-        cut = float(distance_threshold)
-        cut_basis = f"fixed:{cut}"
-    else:
-        cut = adaptive_cut(dist, pct)
-        cut_basis = f"adaptive:p{pct:g}"
+    cut, cut_basis = _resolve_cut(pct, distance_threshold, lambda p: adaptive_cut(dist, p))
 
     # Density estimation needs a handful of points to mean anything; below that
     # HDBSCAN would call almost everything noise. Route tiny pools to the
@@ -491,7 +619,105 @@ def cluster_vectors(
         # Reused by fusion_advisory() so it does not have to recompute the
         # matrix: the distance a typical unrelated pair sits at in THIS pool.
         "p75_pairwise_distance": round(percentile(upper, 75.0), 4),
+        # The pure path has no reusable linkage tree, so no cheap probe.
+        "percentile_probe": None,
     }
+
+
+def _cluster_vectors_dense(
+    vectors: Sequence[Sequence[float]],
+    algorithm: str,
+    pct: float,
+    distance_threshold: float | None,
+    min_cluster_size: int,
+) -> dict[str, Any]:
+    """cluster_vectors() on arrays: the same cut, labels and stats, at scale.
+
+    Only the condensed upper triangle exists (never the n x n matrix, unless
+    HDBSCAN actually runs and needs it). Percentiles come from one sort of it.
+    The average-linkage tree is built once and cut at the chosen threshold,
+    then re-cut at PROBE_PERCENTILES so the result can say what a lower
+    percentile would do — nearly free, since the tree is the expensive part.
+    """
+    np = scale.numpy_or_none()
+    matrix = scale.as_matrix(vectors)
+    n = matrix.shape[0]
+    condensed = scale.condensed_distances(matrix)
+    ordered = np.sort(condensed)
+    cut, cut_basis = _resolve_cut(
+        pct, distance_threshold, functools.partial(scale.offdiag_percentile, ordered)
+    )
+    median = scale.upper_percentile(ordered, 50.0)
+    p75 = scale.upper_percentile(ordered, 75.0)
+    probe_cuts = {
+        p: max(scale.offdiag_percentile(ordered, p), 1e-6) for p in PROBE_PERCENTILES
+    }
+    del ordered  # free one condensed-sized copy before linkage needs its own
+
+    if algorithm == "auto" and n < 8:
+        algorithm = "agglomerative"
+
+    labels: list[int] | None = None
+    used = ""
+    if algorithm == "hdbscan" or (algorithm == "auto" and _hdbscan_installed()):
+        attempt = _labels_hdbscan(
+            scale.square_from_condensed(condensed), cut, min_cluster_size,
+            allow_sklearn=(algorithm == "hdbscan"),
+        )
+        if attempt is None:
+            log("[cluster] hdbscan unavailable; falling back to agglomerative")
+        else:
+            labels, used = attempt
+            if all(lab == -1 for lab in labels):
+                log("[cluster] hdbscan labelled every item noise; using agglomerative")
+                labels = None
+    elif algorithm == "auto":
+        log(
+            "[cluster] standalone hdbscan not installed; using "
+            "agglomerative average linkage at the adaptive cut"
+        )
+
+    tree = None
+    if labels is None:
+        tree = scale.average_linkage(condensed)
+        labels, used = scale.labels_at_cut(tree, n, cut), "agglomerative-average"
+    del condensed
+
+    if used.endswith("-no-epsilon"):
+        cut_basis += ";not-applied"
+    return {
+        "labels": [int(lab) for lab in labels],
+        "algorithm": used,
+        "cut": round(cut, 6),
+        "cut_basis": cut_basis,
+        "median_pairwise_distance": round(median, 4),
+        "p75_pairwise_distance": round(p75, 4),
+        "percentile_probe": (
+            _percentile_probe(tree, n, probe_cuts, min_cluster_size)
+            if tree is not None else None
+        ),
+    }
+
+
+def _percentile_probe(
+    tree: Any, n: int, cuts: dict[float, float], min_cluster_size: int
+) -> list[dict]:
+    """What each probed percentile would produce: cluster count and largest share.
+
+    Counted the way build_clusters() counts: a group smaller than
+    min_cluster_size is unclustered, not a cluster.
+    """
+    floor = max(1, min_cluster_size)
+    probe = []
+    for p, cut in cuts.items():
+        sizes = [s for s in scale.group_sizes(scale.labels_at_cut(tree, n, cut)) if s >= floor]
+        probe.append({
+            "percentile": p,
+            "cut": round(cut, 6),
+            "clusters": len(sizes),
+            "largest_share": round(sizes[0] / n, 3) if sizes else 0.0,
+        })
+    return probe
 
 
 # --------------------------------------------------------------------------
@@ -718,6 +944,10 @@ def medoid_index(indices: Sequence[int], vectors: Sequence[Sequence[float]]) -> 
     loudest post is often the least representative)."""
     if len(indices) == 1:
         return indices[0]
+    if hasattr(vectors, "shape"):
+        # Array input: the O(k * d) form in cluster_scale. A 3,000-member
+        # cluster through the loop below is ~9M Python dot products.
+        return scale.medoid(vectors, indices)
     best_idx, best_total = indices[0], None
     for i in indices:
         total = sum(cosine_distance(vectors[i], vectors[j]) for j in indices if j != i)
@@ -906,26 +1136,61 @@ GATE_NOTE = "advisory for evidence; only the wedge divergence gate is pass/fail"
 SPREAD_SAMPLE = 40
 
 
+#: Above this share of all items in one cluster, the advisory fires. Measured on
+#: two real runs (6,776 and 9,133 items): at p25 and p10 average linkage chained
+#: 22-46% of the pool into one cluster, and the first usable cut held ~10-12%.
+FUSION_SHARE = 0.15
+#: Below this pool size the older, looser share applies. In a pool of a few
+#: hundred, a cluster of 15% is 30-50 posts and is often just the loudest real
+#: pain; the chaining that FUSION_SHARE catches is a large-pool behaviour.
+FUSION_SHARE_MIN_POOL = 1000
+FUSION_SHARE_SMALL_POOL = 0.35
+
+
+def fusion_share_threshold(n_items: int) -> float:
+    """The largest-cluster share above which the size advisory fires."""
+    return FUSION_SHARE if n_items >= FUSION_SHARE_MIN_POOL else FUSION_SHARE_SMALL_POOL
+
+
 def fusion_advisory(
     clusters: Sequence[dict],
     records: Sequence[dict],
     vectors: Sequence[Sequence[float]],
     reference_distance: float | None,
+    probe: Sequence[dict] | None = None,
+    pct: float | None = None,
 ) -> str | None:
-    """Warn (on stderr) when the biggest cluster looks like fused pains.
+    """Warn when the biggest cluster looks like fused pains. Returns the text.
 
-    Average linkage merges on the MEAN distance, so two members of one cluster
-    can sit further apart than the cut — which is how adjacent-but-distinct
-    pains ("nobody can see permit status", "nobody can see 311 request status")
-    end up as one card. The test is distribution-relative, like the cut itself:
-    a cluster whose widest internal pair exceeds the pool's p75 pairwise
-    distance is holding members that are as far apart as typical UNRELATED
-    items. An absolute multiple of the cut would not work — in bge's narrow
-    band 1.25x the cut is past the pool maximum. Also flags a cluster
-    swallowing more than a third of the pool. Advisory only: the fix is a human
-    re-running at a lower --percentile, never a silent adjustment here.
+    Two tests. First, size: one cluster holding more than
+    fusion_share_threshold() of all items (15% from 1,000 items up). At 6-9k items average linkage at p10-p25 chains adjacent pains into
+    one dominant cluster, and a card written about it describes nothing in
+    particular. When the scale path supplied a `probe` (the same linkage tree
+    re-cut at lower percentiles), the advisory names the highest percentile
+    that would bring the largest cluster under the threshold — a suggestion
+    for the human, never applied here.
+
+    Second, spread: average linkage merges on the MEAN distance, so two members
+    of one cluster can sit further apart than the cut — which is how
+    adjacent-but-distinct pains ("nobody can see permit status", "nobody can
+    see 311 request status") end up as one card. A cluster whose widest
+    internal pair exceeds the pool's p75 pairwise distance is holding members
+    as far apart as typical UNRELATED items. An absolute multiple of the cut
+    would not work — in bge's narrow band 1.25x the cut is past the pool
+    maximum.
     """
-    if not clusters or reference_distance is None or not records:
+    if not clusters or not records:
+        return None
+    big = clusters[0]
+    share = big["member_count"] / len(records)
+    threshold = fusion_share_threshold(len(records))
+    if share > threshold:
+        return (
+            f"{big['cluster_id']} holds {big['member_count']} of {len(records)} "
+            f"items ({share:.0%}). One cluster that large usually means several "
+            f"pains merged into one. {_fusion_suggestion(probe, pct, threshold)}"
+        )
+    if reference_distance is None:
         return None
     index_of = {r["_id"]: i for i, r in enumerate(records)}
     worst: tuple[float, dict] | None = None
@@ -936,20 +1201,14 @@ def fusion_advisory(
         idxs = [index_of[m] for m in cluster["member_ids"][:SPREAD_SAMPLE] if m in index_of]
         if len(idxs) < 3:
             continue
-        spread = max(
-            cosine_distance(vectors[a], vectors[b]) for a in idxs for b in idxs if a < b
-        )
+        if hasattr(vectors, "shape"):
+            spread = scale.max_pair_distance(vectors, idxs)
+        else:
+            spread = max(
+                cosine_distance(vectors[a], vectors[b]) for a in idxs for b in idxs if a < b
+            )
         if worst is None or spread > worst[0]:
             worst = (spread, cluster)
-
-    big = clusters[0]
-    share = big["member_count"] / len(records)
-    if share > 0.35:
-        return (
-            f"{big['cluster_id']} holds {big['member_count']}/{len(records)} records "
-            f"({share:.0%}). If that reads as several pains fused into one, re-run "
-            f"with a lower --percentile (10-25)."
-        )
     if worst is None or worst[0] <= reference_distance:
         return None
     spread, cluster = worst
@@ -959,6 +1218,56 @@ def fusion_advisory(
         f"({reference_distance:.3f}) — its members are as far apart as typical "
         f"unrelated evidence. Re-run with a lower --percentile (10-25) if it is "
         f"really two pains."
+    )
+
+
+def _fusion_suggestion(
+    probe: Sequence[dict] | None, pct: float | None, threshold: float
+) -> str:
+    """The re-cluster suggestion for a size advisory, from the probe if there is one."""
+    if not probe:
+        return "Re-cluster at a lower percentile (try 10, then 5) and compare."
+    lower = sorted(
+        (row for row in probe if pct is None or row["percentile"] < pct),
+        key=lambda row: row["percentile"], reverse=True,
+    )
+    fits = [row for row in lower if row["largest_share"] <= threshold]
+    if fits:
+        best = fits[0]
+        return (
+            f"Re-cluster at percentile {best['percentile']:g}: on this same "
+            f"evidence that gives {best['clusters']} clusters, the largest "
+            f"holding {best['largest_share']:.0%}."
+        )
+    if not lower:
+        return "No lower percentile was probed; re-cluster at 5 and compare."
+    floor = lower[-1]
+    return (
+        f"Even percentile {floor['percentile']:g} leaves one cluster with "
+        f"{floor['largest_share']:.0%} of items, so this may be one genuinely "
+        f"dominant pain — read a sample of its members before re-clustering."
+    )
+
+
+def pool_too_large(n: int) -> str | None:
+    """The refusal message when n items cannot be clustered on this box, else None.
+
+    The scale path holds the condensed distance matrix (n(n-1)/2 float64) plus
+    one working copy; the pure path holds n^2 boxed floats. Past the ceiling
+    the process would die without writing anything — observed at 9,133 items
+    on an 8 GB box before the scale path existed — so it is refused up front,
+    loudly, with what to do instead.
+    """
+    dense = scale.numpy_or_none() is not None
+    ceiling = scale.max_items(dense)
+    if n <= ceiling:
+        return None
+    return (
+        f"{n} evidence items is more than this box is set to cluster at once "
+        f"({ceiling}); the distance matrix alone needs about "
+        f"{scale.estimated_gb(n, dense)} GB. Split the run (fewer search angles "
+        f"per run, or one run per community), or on a machine with more memory "
+        f"raise PROSPECTOR_CLUSTER_MAX_ITEMS and re-run."
     )
 
 
@@ -987,6 +1296,9 @@ def failed_payload(
         "clusters": [],
         "unclustered_ids": list(unclustered_ids),
         "duplicate_ids": duplicate_ids or {},
+        "largest_cluster_sizes": [],
+        "fusion_advisory": None,
+        "percentile_probe": None,
         "gate": {
             "candidate_count": len(unclustered_ids),
             "cluster_count": 0,
@@ -1009,6 +1321,7 @@ def run(
     min_cluster_size: int = 2,
     min_clusters: int = 6,
     run_slug: str | None = None,
+    embedding_cache_dir: str | None = None,
 ) -> tuple[dict, int]:
     """Full pipeline. Returns (payload, exit_code)."""
     files, path_problems = expand_inputs(inputs)
@@ -1050,16 +1363,33 @@ def run(
             1,
         )
 
+    too_big = pool_too_large(len(records))
+    if too_big:
+        # Refuse BEFORE embedding: finding out after 45 minutes of embedding
+        # that the matrix cannot fit is the failure this guard replaces.
+        log(f"[cluster] {too_big}")
+        health.append({"source": "clustering", "status": "unavailable", "detail": too_big})
+        return (
+            failed_payload(
+                health, min_clusters, run_slug or infer_run_slug(files),
+                unclustered_ids=[r["_id"] for r in records],
+                duplicate_ids=loaded["duplicate_ids"],
+            ),
+            1,
+        )
+
     texts = [r["_embed_text"] for r in records]
     used_backend = backend
     log(f"[cluster] embedding {len(texts)} records with {backend}")
     try:
-        vectors = embed(texts, backend)
+        vectors, cache_status = embed_for_run(texts, backend, embedding_cache_dir)
         health.append(
             {
                 "source": f"embedding:{backend}",
                 "status": "ok",
-                "detail": f"{model_name_for(backend)}, {len(vectors[0])} dims",
+                "detail": f"{model_name_for(backend)}, {len(vectors[0])} dims; "
+                          f"embedding cache {cache_status}",
+                "embedding_cache": cache_status,
             }
         )
     except Exception as exc:
@@ -1097,7 +1427,7 @@ def run(
             }
         )
         used_backend = "offline"
-        vectors = embed(texts, "offline")
+        vectors, cache_status = embed_for_run(texts, "offline", embedding_cache_dir)
         health.append(
             {
                 "source": "embedding:offline",
@@ -1106,6 +1436,7 @@ def run(
                     f"{OFFLINE_MODEL_NAME} used as fallback; distances are lexical, "
                     "not semantic — clusters are conservative"
                 ),
+                "embedding_cache": cache_status,
             }
         )
 
@@ -1139,7 +1470,9 @@ def run(
 
     largest = max((c["member_count"] for c in clusters), default=0)
     advisory = fusion_advisory(
-        clusters, records, vectors, result.get("p75_pairwise_distance")
+        clusters, records, vectors, result.get("p75_pairwise_distance"),
+        probe=result.get("percentile_probe"),
+        pct=pct if distance_threshold is None else None,
     )
     if advisory:
         log(f"[cluster] advisory: {advisory}")
@@ -1156,6 +1489,12 @@ def run(
         # Kept so /rescan can resolve an id that was folded into another
         # capture of the same permalink.
         "duplicate_ids": loaded["duplicate_ids"],
+        # The shape of the result, so a reader can see fusion without opening
+        # every card: the five biggest clusters, the size advisory (or null),
+        # and — on the scale path — what lower percentiles would produce.
+        "largest_cluster_sizes": [c["member_count"] for c in clusters[:5]],
+        "fusion_advisory": advisory,
+        "percentile_probe": result.get("percentile_probe"),
         # `passed` is ADVISORY here. Evidence is what it is: if the world only
         # complains about three things, three clusters is the finding, not a
         # failure, so this never changes the exit code. Only the wedge
@@ -1274,7 +1613,8 @@ def main() -> int:
             "adaptive cut: percentile of the pool's pairwise cosine distances "
             "treated as same-pain (default 35; lower = more, tighter clusters). "
             "Evidence captured against one inspiration sits in a narrow band, "
-            "so 10-25 often separates adjacent pains that 35 fuses."
+            "so 10-25 often separates adjacent pains that 35 fuses; at several "
+            "thousand items, 5-10."
         ),
     )
     parser.add_argument(
@@ -1298,6 +1638,16 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--embedding-cache-dir",
+        default=None,
+        help=(
+            "reuse and extend a per-run embedding cache in this directory "
+            "(typically runs/<slug>/.cache). Re-clustering at a new "
+            "--percentile then skips embedding entirely; a run killed "
+            "mid-embedding resumes from its last checkpoint."
+        ),
+    )
+    parser.add_argument(
         "--min-clusters",
         type=int,
         default=6,
@@ -1318,6 +1668,7 @@ def main() -> int:
             min_cluster_size=args.min_cluster_size,
             min_clusters=args.min_clusters,
             run_slug=args.run_slug,
+            embedding_cache_dir=args.embedding_cache_dir,
         )
     except Exception as exc:
         # CONTRACTS cross-cutting rule 3: stdout is ALWAYS parseable JSON, so a

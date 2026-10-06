@@ -25,6 +25,22 @@ from pain_stages import evidence_records, invoke, read_json, run_dir
 # Stage 3 — cluster, then seed one card per cluster
 # --------------------------------------------------------------------------
 
+#: Per-run embedding cache, relative to the run directory. Not evidence.
+EMBEDDING_CACHE_DIR = ".cache"
+
+#: Seconds allowed per evidence item when clustering, and the floor. Measured
+#: cold (no cache) on a 2-core box: ~0.4 s per item to embed 6,776 items. The
+#: old flat 1,800 s killed that run; a silent kill is worse than a long wait,
+#: and the embedding cache means a killed run resumes rather than restarts.
+CLUSTER_SECONDS_PER_ITEM = 1.0
+CLUSTER_TIMEOUT_FLOOR = 1800.0
+
+
+def cluster_timeout(n_items: int) -> float:
+    """The subprocess timeout for clustering n items: scales with the corpus."""
+    return max(CLUSTER_TIMEOUT_FLOOR, CLUSTER_SECONDS_PER_ITEM * n_items)
+
+
 def cluster_and_seed_cards(
     slug: str,
     percentile: float | None = None,
@@ -57,22 +73,33 @@ def cluster_and_seed_cards(
                      "cluster_id and discards that work. Pass reseed=true to proceed.",
         }
 
+    records, _ = evidence_records(slug)
     args = [str(directory / "evidence"), "--out", str(directory / "clusters.json"),
-            "--run-slug", slug]
+            "--run-slug", slug, "--embedding-cache-dir", str(directory / EMBEDDING_CACHE_DIR)]
     if percentile is not None:
         args += ["--percentile", str(percentile)]
     if min_cluster_size is not None:
         args += ["--min-cluster-size", str(min_cluster_size)]
-    result = invoke("cluster.py", args)
+    result = invoke("cluster.py", args, timeout=cluster_timeout(len(records)))
     if not result["ok"]:
-        return {"ok": False, "error": result["error"], "stderr_tail": result["stderr_tail"]}
+        return {
+            "ok": False, "error": result["error"], "stderr_tail": result["stderr_tail"],
+            "note": "Embeddings finished before the stop are saved in "
+                    f"runs/{slug}/{EMBEDDING_CACHE_DIR}/, so calling pain_cluster "
+                    "again resumes rather than starting over.",
+        }
 
     payload = read_json(directory / "clusters.json") or {}
     clusters = payload.get("clusters") or []
     if not clusters:
-        return {"ok": False, "error": "cluster.py produced no clusters", "payload": payload}
+        refusal = next(
+            (h.get("detail") for h in payload.get("source_health") or []
+             if h.get("status") == "unavailable"),
+            None,
+        )
+        return {"ok": False, "error": refusal or "cluster.py produced no clusters",
+                "payload": payload}
 
-    records, _ = evidence_records(slug)
     calibration = rubric.scaled_thresholds(len(records))
     decile = rubric.engagement_top_decile(clusters)
     inputs = read_json(directory / "inputs.json") or {}
@@ -88,10 +115,20 @@ def cluster_and_seed_cards(
         json.dumps({**calibration, "engagement_top_decile": decile}, indent=2) + "\n",
         encoding="utf-8",
     )
+    gate = payload.get("gate") or {}
     return {
         "ok": True, "clusters": len(clusters),
         "cards_written": len(written),
         "cut_basis": payload.get("cut_basis"),
+        "largest_cluster_share": gate.get("largest_cluster_share"),
+        "largest_cluster_sizes": payload.get("largest_cluster_sizes"),
+        "fusion_advisory": payload.get("fusion_advisory"),
+        "percentile_probe": payload.get("percentile_probe"),
+        "embedding_cache": next(
+            (h.get("embedding_cache") for h in payload.get("source_health") or []
+             if "embedding_cache" in h),
+            None,
+        ),
         "unclustered_items": len(payload.get("unclustered_ids") or []),
         "frequency_thresholds_used": calibration,
         "engagement_top_decile": decile,

@@ -75,6 +75,27 @@ def _health_line(slug: str) -> str:
     return " · ".join(parts) or "no health entries recorded"
 
 
+def _shape_line(clusters: dict) -> str:
+    """How lopsided the clustering is, and the fusion advisory when one fired.
+
+    One cluster holding a large share of every item usually means several
+    pains were merged; at 6-9k items that happened at the default cut on both
+    runs that surfaced it (46% and 22% in one cluster). Printing the share in
+    the header lets a reader see it without opening every card.
+    """
+    share = (clusters.get("gate") or {}).get("largest_cluster_share")
+    if share is None:
+        return "**Clustering shape** — [not recorded]"
+    sizes = clusters.get("largest_cluster_sizes") or []
+    line = (
+        f"**Clustering shape** — the largest cluster holds {share:.0%} of all "
+        "evidence items"
+        + (f" (five biggest: {', '.join(str(n) for n in sizes)})" if sizes else "")
+    )
+    advisory = clusters.get("fusion_advisory")
+    return line + (f". **Possible merged pains:** {advisory}" if advisory else "")
+
+
 def _threshold_line(fields: dict | None) -> str:
     """`cluster_size >= 20, distinct_authors >= 12, distinct_communities >= 3`."""
     if not fields:
@@ -147,6 +168,8 @@ def _header(slug: str, cards: list[dict], ranked: list[dict], verbose: bool = Fa
         "splits harder",
         "",
         f"**Sort key:** {SORT_KEY}",
+        "",
+        _shape_line(clusters),
         "",
         "**Counts** — clusters found "
         f"{len(clusters.get('clusters') or [])} · cards written {len(cards)} · "

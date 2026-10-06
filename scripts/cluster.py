@@ -260,12 +260,12 @@ def embed_for_run(
 
     matrix = np.stack([cache.get(k) for k in keys]).astype(np.float64)
     if not todo:
-        status = "hit"
+        cache_status = "hit"
     elif reused == 0:
-        status = "miss"
+        cache_status = "miss"
     else:
-        status = f"partial: {reused} of {len(texts)} reused"
-    return matrix, status
+        cache_status = f"partial: {reused} of {len(texts)} reused"
+    return matrix, cache_status
 
 
 # --------------------------------------------------------------------------

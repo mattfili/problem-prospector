@@ -32,6 +32,8 @@ import pain_mcp  # noqa: E402
 FORBIDDEN = {
     "min_score": "the forbidden capture filter; the archive snapshots score at "
                  "ingest, so a floor deletes the newest evidence first",
+    # The frame-level `era` on pain_run_create is not a capture lever: it is set
+    # once with the frame, and no capture tool accepts a window of its own.
     "after": "historical windowing belongs to the retro-trend stage, not capture",
     "before": "historical windowing belongs to the retro-trend stage, not capture",
     "score": "intensity is derived from validated quotes, never asserted",
@@ -47,7 +49,8 @@ REQUIRED_ENUMS = {
 }
 
 EXPECTED_TOOLS = {
-    "pain_run_create", "pain_run_status", "pain_capture_reddit", "pain_capture_trends",
+    "pain_run_create", "pain_run_status", "pain_capture_reddit", "pain_capture_reddit_sweep",
+    "pain_capture_trends",
     "pain_capture_saturation", "pain_record_source_decision", "pain_merge_staging",
     "pain_ingest_records",
     "pain_capture_gate", "pain_cluster", "pain_inventory_gate", "pain_score_intensity",

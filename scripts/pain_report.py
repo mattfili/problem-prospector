@@ -21,10 +21,13 @@ gates that names the next tool to call. It never writes.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pain_rubric as rubric
 from pain_cards import card_paths
 from pain_stages import (
     capture_gate,
+    era_bounds,
     evidence_records,
     read_json,
     read_jsonl,
@@ -103,8 +106,47 @@ def _threshold_line(fields: dict | None) -> str:
     return ", ".join(f"{name} >= {value}" for name, value in fields.items())
 
 
-def _card_block(card: dict, rank: int) -> list[str]:
-    """One card: the two axes, their evidence, and the 2x2 read. No composite."""
+def _month(ts: object) -> str | None:
+    """Unix seconds as YYYY-MM (UTC), or None."""
+    if not isinstance(ts, (int, float)):
+        return None
+    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m")
+
+
+def _outside_era(ts: object, era: dict | None) -> bool:
+    """Whether a timestamp falls outside the frame's era (False when no era or no date)."""
+    after, before = era_bounds(era)
+    if not isinstance(ts, (int, float)):
+        return False
+    return (after is not None and ts < after) or (before is not None and ts >= before)
+
+
+def _era_line(era: dict | None, records: list[dict]) -> str:
+    """When the evidence is from, against the frame's era if it has one."""
+    stamps = [r["created_utc"] for r in records if isinstance(r.get("created_utc"), (int, float))]
+    undated = len(records) - len(stamps)
+    span = f"{_month(min(stamps))} to {_month(max(stamps))}" if stamps else "no dates recorded"
+    tail = f"; {undated} items carry no date" if undated else ""
+    if not era or not era.get("after"):
+        return f"**Era** — none set for this frame; evidence is dated {span}{tail}"
+    outside = sum(1 for t in stamps if _outside_era(t, era))
+    share = outside / len(records) if records else 0.0
+    bounds = f"{era['after']} to {era['before']}" if era.get("before") else f"{era['after']} onward"
+    return (f"**Era** — {bounds}: {outside} of {len(records)} evidence items ({share:.0%}) "
+            f"are dated outside it, and quotes from outside it are marked below; "
+            f"evidence spans {span}{tail}")
+
+
+def _card_block(
+    card: dict, rank: int, by_url: dict[str, dict] | None = None, era: dict | None = None
+) -> list[str]:
+    """One card: the two axes, their evidence, and the 2x2 read. No composite.
+
+    Each quote carries its month and community, looked up from the evidence by
+    URL, and is marked when it falls outside the frame's era — the delivered
+    reports had to be annotated with dates by hand before this.
+    """
+    by_url = by_url or {}
     frequency = card.get("frequency") or {}
     intensity = card.get("intensity") or {}
     true_markers = [m for m, on in (intensity.get("markers") or {}).items() if on]
@@ -125,8 +167,15 @@ def _card_block(card: dict, rank: int) -> list[str]:
         f"markers true: {', '.join(true_markers) or 'none'}",
     ]
     for exemplar in intensity.get("exemplars") or []:
+        record = by_url.get(str(exemplar.get("url") or "").rstrip("/"), {})
+        when = _month(record.get("created_utc"))
+        tags = [t for t in (when, record.get("community")) if t]
+        if _outside_era(record.get("created_utc"), era):
+            tags.append("**outside the era**")
         lines.append(
-            f"  - \"{exemplar['quote']}\" ({exemplar['words']}w) — {exemplar['url']}"
+            f"  - \"{exemplar['quote']}\" ({exemplar['words']}w)"
+            + (f" — {' · '.join(tags)}" if tags else "")
+            + f" — {exemplar['url']}"
         )
     if intensity.get("note"):
         lines.append(f"  - scoring note: {intensity['note']}")
@@ -170,6 +219,8 @@ def _header(slug: str, cards: list[dict], ranked: list[dict], verbose: bool = Fa
         f"**Sort key:** {SORT_KEY}",
         "",
         _shape_line(clusters),
+        "",
+        _era_line(inputs.get("era"), records),
         "",
         "**Counts** — clusters found "
         f"{len(clusters.get('clusters') or [])} · cards written {len(cards)} · "
@@ -262,9 +313,12 @@ def render_report(slug: str, verbose: bool = False) -> dict:
         return {"ok": False, "error": f"no cards in runs/{slug}/cards — cluster first"}
     ranked = _sorted_ranked(cards)
     lines = _header(slug, cards, ranked, verbose=verbose)
+    records, _ = evidence_records(slug)
+    by_url = {str(r.get("url") or "").rstrip("/"): r for r in records if r.get("url")}
+    era = (read_json(run_dir(slug) / "inputs.json") or {}).get("era")
 
     for rank, card in enumerate(ranked, start=1):
-        lines += _card_block(card, rank)
+        lines += _card_block(card, rank, by_url, era)
 
     excluded = [c for c in cards if (c.get("inventory_gate") or {}).get("verdict") == "exclude"]
     if excluded:
@@ -365,8 +419,10 @@ def run_status(slug: str) -> dict:
     }
     if not staged and not records:
         return {**state, "stage": "2 — capture not started",
-                "next": "pain_capture_reddit (every cell), then the relevant "
-                        "pain_capture_trends sources, then pain_capture_saturation"}
+                "next": "pain_capture_reddit_sweep for busy subreddits (more than ~20 "
+                        "posts a day) or pain_capture_reddit for small ones, every cell; "
+                        "then the relevant pain_capture_trends sources, then "
+                        "pain_capture_saturation"}
     if staged and not records:
         return {**state, "stage": "2b — captured, not merged", "next": "pain_merge_staging"}
     if gate["decision"] == "stop":

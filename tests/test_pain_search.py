@@ -377,6 +377,122 @@ class DialogIngest(unittest.TestCase):
         self.assertEqual(len([r for r in records if r["url"].rstrip("/") == shared.rstrip("/")]), 1)
 
 
+class EraAndSweepCapture(unittest.TestCase):
+    """The frame's era, the sweep capture's staging, and dated health lines.
+
+    A "since 2023" frame once cited 2014-2020 posts with nothing flagging it, and
+    the busy-subreddit sweep must never record an unfinished sweep as a finding.
+    """
+
+    SLUG = "era-sweep-selftest-1970-01-01"
+
+    def setUp(self) -> None:
+        self.directory = pain_stages.run_dir(self.SLUG)
+        shutil.rmtree(self.directory, ignore_errors=True)
+        self.matrix = [
+            {"cell_id": f"m0{n}", "persona": "p", "vertical": "v", "framing": "f",
+             "queries": ["a", "b", "c"], "subreddits": ["r/landscaping"]}
+            for n in range(1, 7)
+        ]
+        self.real_invoke = pain_capture.invoke
+
+    def tearDown(self) -> None:
+        pain_capture.invoke = self.real_invoke
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def create(self, era=None) -> dict:
+        return pain_stages.create_run("era sweep selftest", self.matrix,
+                                      run_date="1970-01-01", era=era)
+
+    def health(self) -> list[dict]:
+        return pain_stages.read_jsonl(self.directory / "source_health.json")[0]
+
+    def test_era_is_validated_and_recorded(self) -> None:
+        self.assertFalse(self.create({"after": "last spring"})["ok"])
+        self.assertFalse(self.create({"after": "2024-01-01", "before": "2023-01-01"})["ok"])
+        self.assertTrue(self.create({"after": "2023-10-01"})["ok"])
+        inputs = pain_stages.read_json(self.directory / "inputs.json")
+        self.assertEqual(inputs["era"], {"after": "2023-10-01", "before": None})
+        after, before, chosen = pain_stages.era_window(inputs)
+        self.assertEqual(after, 1696118400)
+        self.assertEqual(before, inputs["created_utc"])
+        self.assertIn("era", chosen)
+
+    def test_changing_the_era_of_an_existing_run_is_refused(self) -> None:
+        self.assertTrue(self.create({"after": "2023-10-01"})["ok"])
+        self.assertFalse(self.create({"after": "2020-01-01"})["ok"])
+        self.assertTrue(self.create({"after": "2023-10-01"})["ok"])
+
+    def test_default_window_is_the_year_before_creation(self) -> None:
+        after, before, chosen = pain_stages.era_window({"created_utc": 1_800_000_000})
+        self.assertEqual(before - after, 365 * 86400)
+        self.assertIn("no era set", chosen)
+
+    def test_date_span_counts_items_outside_the_era(self) -> None:
+        records = [{"created_utc": 1_500_000_000}, {"created_utc": 1_700_000_000}, {}]
+        span = pain_capture.date_span(records, {"after": "2023-10-01", "before": None})
+        self.assertEqual(span, {"earliest_utc": 1_500_000_000, "latest_utc": 1_700_000_000,
+                                "n_before_era": 1})
+
+    def test_unfinished_sweep_records_nothing(self) -> None:
+        self.create()
+        pain_capture.invoke = lambda *_a, **_k: {
+            "ok": True, "payload": {"outcome": "sweep-in-progress", "source_health": [],
+                                    "per_subreddit": [{"subreddit": "r/landscaping",
+                                                       "progress": 0.4}]},
+            "error": None, "stderr_tail": None}
+        result = pain_capture.capture_reddit_sweep(self.SLUG, "m01", "pavers", [])
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["resume"])
+        self.assertEqual(self.health(), [])
+
+    def test_staged_sweep_records_health_with_its_date_span(self) -> None:
+        self.create({"after": "2023-10-01"})
+        seen_args: list[list[str]] = []
+
+        def fake_invoke(script, args, timeout=0):
+            seen_args.append(args)
+            out = Path(args[args.index("--out") + 1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps({"id": "x", "cell_id": "m01", "captured_utc": 42,
+                                       "created_utc": 1_700_000_000}) + "\n")
+            return {"ok": True, "error": None, "stderr_tail": None, "payload": {
+                "outcome": "staged", "captured_utc": 42,
+                "totals": {"post_records": 1, "items_written": 1},
+                "source_health": [{"source": "reddit:arctic-shift", "status": "ok",
+                                   "fallback": None, "detail": "matched", "mode": "sweep"}]}}
+
+        pain_capture.invoke = fake_invoke
+        result = pain_capture.capture_reddit_sweep(self.SLUG, "m01", "pavers", [])
+        self.assertTrue(result["ok"], result)
+        args = seen_args[0]
+        self.assertEqual(args[args.index("--subreddits") + 1], "landscaping")
+        self.assertEqual(args[args.index("--after") + 1], "1696118400")
+        [entry] = self.health()
+        self.assertEqual(entry["date_span"]["n_before_era"], 0)
+        self.assertEqual(entry["date_span"]["earliest_utc"], 1_700_000_000)
+
+    def test_query_capture_health_carries_its_date_span(self) -> None:
+        self.create({"after": "2023-10-01"})
+
+        def fake_invoke(script, args, timeout=0):
+            out = Path(args[args.index("--out") + 1])
+            out.write_text("".join(json.dumps(r) + "\n" for r in [
+                {"id": "old", "cell_id": "m01", "captured_utc": 7, "created_utc": 1_420_000_000},
+                {"id": "new", "cell_id": "m01", "captured_utc": 7, "created_utc": 1_700_000_000},
+                {"id": "other-capture", "cell_id": "m01", "captured_utc": 3, "created_utc": 1}]))
+            return {"ok": True, "error": None, "stderr_tail": None, "payload": {
+                "captured_utc": 7, "source_health": [
+                    {"source": "reddit:arctic-shift", "status": "ok", "detail": "1/1 served"}]}}
+
+        pain_capture.invoke = fake_invoke
+        pain_capture.capture_reddit(self.SLUG, "m01", "pavers", [])
+        [entry] = self.health()
+        self.assertEqual(entry["date_span"]["n_before_era"], 1)
+        self.assertIn("items dated 2014-12-31..2023-11-14 (1 outside the frame's era)",
+                      entry["detail"])
+
+
 class ThinCaptureSourceFloor(unittest.TestCase):
     """The source floor distinguishes a recorded relevance skip from silence.
 
@@ -638,6 +754,9 @@ class EndToEnd(unittest.TestCase):
         self.assertIn("Frequency thresholds used", text)
         self.assertIn("Source health", text)
         self.assertIn("**Clustering shape** — the largest cluster holds", text)
+        self.assertIn("**Era** — none set for this frame; evidence is dated 2024-11", text)
+        # Every quote carries its month and community, looked up from evidence.
+        self.assertRegex(text, r"\(\d+w\) — 2024-11 · r/sub\d — https://")
         # Rubric-interpretation disclosures are maintainer-facing: absent from the
         # default report, present with verbose=True.
         self.assertNotIn("Encoded rubric interpretation", text)

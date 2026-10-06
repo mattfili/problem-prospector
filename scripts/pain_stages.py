@@ -259,32 +259,90 @@ def validate_matrix(matrix: list[dict]) -> list[str]:
     return problems
 
 
+#: Default sweep window when the frame sets no era: this many days up to the
+#: run's creation. Fixed from `created_utc`, so every call of a run sweeps the
+#: same window no matter when it runs.
+DEFAULT_ERA_DAYS = 365
+
+
+def normalise_era(era: dict | None) -> tuple[dict | None, list[str]]:
+    """Validate an `{after, before}` era of ISO dates; return (era, problems).
+
+    `before` is optional (open-ended up to the run's creation). The era is a
+    statement about the frame — "pains since the market fell out in 2023" —
+    recorded once in inputs.json. The sweep capture uses it as its window; the
+    query capture does not filter by it, but every capture reports how much of
+    what it found falls outside it, and so does the report.
+    """
+    if era is None:
+        return None, []
+    if not isinstance(era, dict) or set(era) - {"after", "before"} or "after" not in era:
+        return None, ['era must be {"after": "YYYY-MM-DD"} with an optional "before"']
+    parsed: dict[str, str | None] = {"after": None, "before": None}
+    for key in ("after", "before"):
+        value = era.get(key)
+        if value is None:
+            continue
+        try:
+            parsed[key] = datetime.strptime(str(value), "%Y-%m-%d").strftime("%Y-%m-%d")
+        except ValueError:
+            return None, [f"era {key} {value!r} is not a date like 2023-10-01"]
+    if parsed["before"] and parsed["before"] <= parsed["after"]:
+        return None, [f"era before ({parsed['before']}) must be later than after ({parsed['after']})"]
+    return parsed, []
+
+
+def era_bounds(era: dict | None) -> tuple[int | None, int | None]:
+    """The era's (after, before) as unix seconds; None where it is open."""
+    def to_ts(value: str | None) -> int | None:
+        if not value:
+            return None
+        return int(datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp())
+
+    era = era or {}
+    return to_ts(era.get("after")), to_ts(era.get("before"))
+
+
+def era_window(inputs: dict) -> tuple[int, int, str]:
+    """(after, before, how it was chosen) in unix seconds, for the sweep capture."""
+    created = int(inputs.get("created_utc") or datetime.now(timezone.utc).timestamp())
+    after, before = era_bounds(inputs.get("era"))
+    if after is not None:
+        return after, before or created, "the frame's era"
+    return created - DEFAULT_ERA_DAYS * 86400, created, (
+        f"no era set, so the {DEFAULT_ERA_DAYS} days before the run was created")
+
+
 def create_run(
     inspiration: str,
     matrix: list[dict],
     niche: str | None = None,
     top: int = 5,
     run_date: str | None = None,
+    era: dict | None = None,
 ) -> dict:
     """Write `inputs.json` — before any capture, so the run is auditable.
 
     Refuses on a failing Stage-1 gate rather than capturing against a half-written
     frame. Idempotent for an existing slug only when the frame is unchanged;
     otherwise it refuses, because silently replacing a frame mid-run detaches
-    every already-captured record's `cell_id` from its meaning.
+    every already-captured record's `cell_id` from its meaning. The era is part
+    of the frame for that purpose: changing it would change the sweep window.
     """
     problems = validate_matrix(matrix)
+    era, era_problems = normalise_era(era)
+    problems += era_problems
     if problems:
         return {"ok": False, "stage": "frame", "problems": problems}
 
     slug = slugify(inspiration, run_date)
     directory = run_dir(slug)
     existing = read_json(directory / "inputs.json")
-    if existing is not None and existing.get("matrix") != matrix:
+    if existing is not None and (existing.get("matrix") != matrix or existing.get("era") != era):
         return {
             "ok": False, "stage": "frame", "slug": slug,
             "problems": [
-                f"runs/{slug}/inputs.json already exists with a different matrix. "
+                f"runs/{slug}/inputs.json already exists with a different matrix or era. "
                 "This is a resume, not a fresh run: call pain_run_status(slug) and "
                 "continue, or re-run with a different inspiration."
             ],
@@ -301,13 +359,19 @@ def create_run(
             "cards_only": True, "top": int(top),
         },
         "matrix": matrix,
+        "era": era,
     }
+    if existing is not None:
+        # Same frame: keep the original creation time, which anchors the
+        # default sweep window.
+        payload["created_utc"] = existing.get("created_utc", payload["created_utc"])
     (directory / "inputs.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     return {
         "ok": True, "slug": slug, "run_dir": str(directory),
         "cells": [c["cell_id"] for c in matrix],
+        "era": era,
         "note": "flags.cards_only is true: a pain-search run stops before wedging.",
     }
 

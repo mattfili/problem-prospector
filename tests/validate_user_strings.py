@@ -40,6 +40,8 @@ MODULES = [
     "pain_capture.py",
     "pain_cards.py",
     "cluster.py",
+    "cluster_scale.py",
+    "reddit_sweep.py",
 ]
 
 # Contract vocabulary that reads as jargon inside a sentence. Whether each term

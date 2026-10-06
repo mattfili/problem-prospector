@@ -59,6 +59,7 @@ export CHROMA_PROXY_API_KEY="decoy-must-not-be-used"
 SCRIPTS=(
   cluster.py
   reddit_search.py
+  reddit_sweep.py
   hn_history.py
   reddit_history.py
   gtrends_history.py
@@ -74,6 +75,7 @@ SCRIPTS=(
 # --help section below does not apply to them. The credential audit does.
 STAGE_MODULES=(
   pain_rubric.py
+  cluster_scale.py
   pain_stages.py
   pain_cards.py
   pain_capture.py
@@ -269,6 +271,24 @@ if [ -f tests/test_arctic_backoff.py ]; then
   fi
 else
   skip "arctic shift throttle ladder"
+fi
+
+# ---------------------------------------------------------------------------
+section "big-subreddit sweep"
+# ---------------------------------------------------------------------------
+# Stubs the archive. Guards local matching, the time-spread 100-per-subreddit
+# cap, the declared days-1-10 sample, resume after an interruption without
+# losing a post, and the sweep's own rate-limit rule: a 429/403 is answered
+# with a 60-90 s pause, never a tight retry (an owner-approved difference from
+# reddit_search.py, which never retries either).
+if [ -f tests/test_reddit_sweep.py ]; then
+  if out="$(uv run --quiet tests/test_reddit_sweep.py 2>&1)"; then
+    ok "reddit_sweep.py ($(echo "$out" | grep -oE 'Ran [0-9]+ tests' | head -1); long pauses on 429/403, resumable)"
+  else
+    bad "reddit_sweep.py" "$(echo "$out" | grep -E '^(FAIL|ERROR)' | head -3 | tr '\n' ' ')"
+  fi
+else
+  skip "big-subreddit sweep"
 fi
 
 # ---------------------------------------------------------------------------

@@ -82,6 +82,7 @@ def pain_run_create(
     matrix: list[dict],
     niche: str | None = None,
     top: int = 5,
+    era: dict | None = None,
 ) -> dict:
     """Open a pain-search run: validate the permutation matrix and write inputs.json.
 
@@ -102,11 +103,19 @@ def pain_run_create(
     continues into adjacent verticals the user did not name — three niches
     becoming three cells turns an exploration tool into a confirmation tool.
 
+    `era` is optional: `{"after": "2023-10-01"}`, with an optional `"before"`, for a
+    frame that is about a period ("since the market fell out in 2023"). It is
+    recorded once with the frame. The sweep capture uses it as its window; every
+    capture reports how much of what it found falls outside it; and the report
+    prints the share of evidence from outside the era and flags out-of-era quotes.
+    Without it, the sweep covers the year before the run was created.
+
     Refuses on a failing shape gate rather than letting capture run against a
-    half-written frame, and refuses to replace an existing frame for the same slug
-    because that would detach every captured record's `cell_id` from its meaning.
+    half-written frame, and refuses to replace an existing frame (matrix or era)
+    for the same slug because that would detach every captured record's `cell_id`
+    from its meaning.
     """
-    return stages.create_run(inspiration, matrix, niche=niche, top=top)
+    return stages.create_run(inspiration, matrix, niche=niche, top=top, era=era)
 
 
 @mcp.tool()
@@ -169,9 +178,55 @@ def pain_capture_reddit(
     already named the communities. Omit `query` only for a subreddit whose entire
     topic *is* this cell's vertical; for a broad sub the latest 100 posts are
     mostly unrelated noise that clusters.
+
+    For a BUSY subreddit (more than ~20 posts a day — most general-interest ones)
+    use `pain_capture_reddit_sweep` instead: the archive's search times out there,
+    and when it answers it returns only the newest 100 posts.
     """
     return capture_stage.capture_reddit(
         slug, cell_id, query, subreddits or [], concurrent_captures, retry_at_limit_50
+    )
+
+
+@mcp.tool()
+def pain_capture_reddit_sweep(
+    slug: str,
+    cell_id: str,
+    query: str,
+    subreddits: list[str] | None = None,
+    concurrent_captures: int = 2,
+) -> dict:
+    """Capture Reddit posts AND comments for one cell and one query, from busy subreddits.
+
+    Use this instead of `pain_capture_reddit` when a cell names a busy subreddit
+    (more than ~20 posts a day). There, the archive's own search times out most of
+    the time, and even when it works it returns only the newest 100 posts — a few
+    weeks of a three-year frame. This tool instead downloads every post in the
+    window once per subreddit (cached in the run and reused by every later query
+    and cell), finds the query in titles and bodies itself, and keeps at most 100
+    posts per subreddit spread EVENLY ACROSS THE WINDOW, plus the top 10 comments
+    from each of the 10 most-discussed matches.
+
+    The window is the frame's `era`, or the year before the run was created. There
+    is no window, limit or score-floor parameter: the 100-per-subreddit cap is fixed
+    and time-spread, and the result says so. A very busy subreddit (estimated over
+    60,000 posts in the window) is swept on days 1-10 of every month, decided by a
+    one-request volume probe and recorded on the evidence's health line.
+
+    The first call for a big subreddit can take many minutes. Each call sweeps for
+    up to 15 minutes; if the sweep is not finished it returns `resume: true` and
+    stages nothing — call again with the same arguments. Everything fetched is
+    saved as it arrives. If the archive answers "too many requests", the tool
+    pauses 60-90 s and retries, a few times; if it still refuses, the result says
+    so and a later call resumes.
+
+    Pass `concurrent_captures` = how many captures you are running at once; more
+    than two parallel streams from one machine drew throttling. Omit `subreddits`
+    to use the cell's own list from `inputs.json`. Use the cell's query strings
+    verbatim — a query that matches nothing is a zero-result finding.
+    """
+    return capture_stage.capture_reddit_sweep(
+        slug, cell_id, query, subreddits or [], concurrent_captures
     )
 
 

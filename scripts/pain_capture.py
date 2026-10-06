@@ -30,6 +30,8 @@ from pain_stages import (
     QUERYABLE_SOURCES,
     TRENDING_ONLY_SOURCES,
     append_health,
+    era_bounds,
+    era_window,
     invoke,
     read_json,
     read_jsonl,
@@ -52,6 +54,51 @@ def _staging(slug: str, name: str) -> Path:
     path = run_dir(slug) / "evidence" / ".staging" / name
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _cell_subreddits(slug: str, cell_id: str, subreddits: list[str]) -> list[str]:
+    """The caller's subreddits, else the cell's own list from inputs.json, bare names."""
+    if not subreddits:
+        inputs = read_json(run_dir(slug) / "inputs.json") or {}
+        cell = next(
+            (c for c in inputs.get("matrix", []) if c.get("cell_id") == cell_id), {}
+        )
+        subreddits = list(cell.get("subreddits") or [])
+    # removeprefix, not lstrip: lstrip("r/") strips *characters*, which ate
+    # the leading letter of any subreddit starting with r (restaurantowners
+    # -> estaurantowners, observed live 2026-09-02).
+    return [s.strip("/").removeprefix("r/") for s in subreddits]
+
+
+def date_span(records: list[dict], era: dict | None) -> dict:
+    """Earliest and latest post date in `records`, and how many fall outside the era.
+
+    Recorded on every capture's health line because nothing else says WHEN the
+    evidence is from: a frame about "since 2023" once cited 2014-2020 posts in
+    its report with nothing flagging it.
+    """
+    stamps = [int(r["created_utc"]) for r in records
+              if isinstance(r.get("created_utc"), (int, float))]
+    span: dict = {
+        "earliest_utc": min(stamps) if stamps else None,
+        "latest_utc": max(stamps) if stamps else None,
+    }
+    after, before = era_bounds(era)
+    if after is not None:
+        span["n_before_era"] = sum(1 for t in stamps if t < after)
+    if before is not None:
+        span["n_after_era"] = sum(1 for t in stamps if t >= before)
+    return span
+
+
+def _span_text(span: dict) -> str:
+    """`; posts dated 2019-03-02..2026-09-28 (41 before the era)` or ''."""
+    fmt = lambda t: datetime.fromtimestamp(t, tz=timezone.utc).strftime("%Y-%m-%d")  # noqa: E731
+    if span.get("earliest_utc") is None:
+        return ""
+    outside = span.get("n_before_era", 0) + span.get("n_after_era", 0)
+    return (f"; items dated {fmt(span['earliest_utc'])}..{fmt(span['latest_utc'])}"
+            + (f" ({outside} outside the frame's era)" if outside else ""))
 
 
 def capture_reddit(
@@ -82,18 +129,10 @@ def capture_reddit(
     them produced a live run whose first capture wave failed for want of a
     parameter the run had on disk all along (observed 2026-09-02).
     """
-    if not subreddits:
-        inputs = read_json(run_dir(slug) / "inputs.json") or {}
-        cell = next(
-            (c for c in inputs.get("matrix", []) if c.get("cell_id") == cell_id), {}
-        )
-        subreddits = list(cell.get("subreddits") or [])
+    subreddits = _cell_subreddits(slug, cell_id, subreddits)
     out = _staging(slug, f"reddit-{cell_id}.jsonl")
     args = [
-        # removeprefix, not lstrip: lstrip("r/") strips *characters*, which ate
-        # the leading letter of any subreddit starting with r (restaurantowners
-        # -> estaurantowners, observed live 2026-09-02).
-        "--subreddits", ",".join(s.strip("/").removeprefix("r/") for s in subreddits),
+        "--subreddits", ",".join(subreddits),
         "--limit", "50" if retry_at_limit_50 else "100",
         "--comments", "--comments-per-post", "10", "--comments-max-posts", "25",
         "--politeness", str(float(max(POLITENESS_FLOOR, concurrent_captures))),
@@ -102,7 +141,114 @@ def capture_reddit(
     if query:
         args += ["--query", query]
     result = invoke("reddit_search.py", args)
+    _annotate_span(slug, result, out, cell_id)
     return _capture_result(slug, result, out, "reddit", cell_id, query)
+
+
+def _annotate_span(
+    slug: str, result: dict, out: Path, cell_id: str, in_detail: bool = True
+) -> None:
+    """Add this capture's date span to its archive health lines, in place.
+
+    The staging file holds every query of the cell, so the records of THIS
+    capture are picked out by the capture timestamp the script stamped on them.
+    `in_detail=False` sets the structured field only, for the sweep, whose
+    detail text already states the dates.
+    """
+    payload = result.get("payload") or {}
+    captured = payload.get("captured_utc")
+    if captured is None:
+        return
+    staged, _ = read_jsonl(out)
+    mine = [r for r in staged if r.get("captured_utc") == captured and r.get("cell_id") == cell_id]
+    era = (read_json(run_dir(slug) / "inputs.json") or {}).get("era")
+    span = date_span(mine, era)
+    for entry in payload.get("source_health") or []:
+        if str(entry.get("source", "")).startswith("reddit:arctic") and \
+                entry.get("status") in ("ok", "degraded"):
+            entry["date_span"] = span
+            if in_detail:
+                entry["detail"] = f"{entry.get('detail')}{_span_text(span)}"
+
+
+#: Seconds one sweep call may spend sweeping before it reports progress. The
+#: subprocess gets this plus room for matching, comments and throttle pauses.
+SWEEP_BUDGET = 900
+SWEEP_TIMEOUT = SWEEP_BUDGET + 2700
+
+
+def capture_reddit_sweep(
+    slug: str,
+    cell_id: str,
+    query: str,
+    subreddits: list[str],
+    concurrent_captures: int = 2,
+) -> dict:
+    """Reddit capture for busy subreddits: sweep by time, match the query locally.
+
+    The query capture asks the archive to search a subreddit, which on a big
+    subreddit times out most of the time and returns only the newest 100 posts
+    when it works. This instead caches every post in the window once per
+    subreddit (runs/<slug>/evidence/.sweep/, resumable, not evidence), matches
+    the query against title and body, keeps at most 100 posts per subreddit
+    spread evenly across the window, and adds the top comments.
+
+    The window is the frame's era, or the year before the run was created; the
+    caller cannot set it, cap it, or put a score floor on it. A sweep longer
+    than one call's budget returns `resume: true` and stages nothing — call
+    again with the same arguments until it completes.
+    """
+    inputs = read_json(run_dir(slug) / "inputs.json") or {}
+    after, before, chosen = era_window(inputs)
+    subreddits = _cell_subreddits(slug, cell_id, subreddits)
+    out = _staging(slug, f"reddit-{cell_id}.jsonl")
+    result = invoke("reddit_sweep.py", [
+        "--subreddits", ",".join(subreddits), "--query", query,
+        "--after", str(after), "--before", str(before), "--cell-id", cell_id,
+        "--sweep-dir", str(run_dir(slug) / "evidence" / ".sweep"), "--out", str(out),
+        "--politeness", str(float(max(1, concurrent_captures))),
+        "--budget", str(SWEEP_BUDGET),
+    ], timeout=SWEEP_TIMEOUT)
+    payload = result.get("payload") or {}
+    outcome = payload.get("outcome")
+    window = {"after": after, "before": before, "chosen_by": chosen}
+
+    if outcome == "sweep-in-progress":
+        # Not a finding and not a failure, so nothing goes on the health record.
+        return {
+            "ok": False, "resume": True, "cell_id": cell_id, "query": query,
+            "window": window, "subreddits": payload.get("per_subreddit"),
+            "note": "The subreddit sweep is not finished; nothing was staged, because "
+                    "matching against part of the window would skew the sample toward "
+                    "its start. Everything fetched so far is saved. Call again with the "
+                    "same arguments to continue.",
+        }
+    _annotate_span(slug, result, out, cell_id, in_detail=False)
+    health = list(payload.get("source_health") or [])
+    if not result["ok"]:
+        health.append({
+            "source": "reddit:arctic-shift", "status": "unavailable", "fallback": None,
+            "detail": f"{cell_id} {query!r}: sweep capture failed: {result.get('error')}"
+                      + (f" | stderr: {result['stderr_tail']}" if result.get("stderr_tail") else ""),
+        })
+    append_health(slug, health)
+    totals = payload.get("totals") or {}
+    return {
+        "ok": outcome == "staged", "resume": outcome == "unavailable",
+        "cell_id": cell_id, "query": query, "window": window,
+        "staged": str(out), "items_written": totals.get("items_written", 0),
+        "zero_result": outcome == "staged" and not totals.get("post_records"),
+        "per_subreddit": payload.get("per_query") or payload.get("per_subreddit"),
+        "date_span": payload.get("date_span"),
+        "http": payload.get("http"),
+        "note": (
+            "The archive kept refusing after several long pauses; everything swept so far "
+            "is saved, so calling again later resumes rather than restarts. This is not "
+            "a finding that nobody is discussing it."
+            if outcome == "unavailable" else None
+        ),
+        "stderr_tail": result.get("stderr_tail"),
+    }
 
 
 def capture_trends(

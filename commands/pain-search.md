@@ -52,6 +52,11 @@ you cite, not from a view you form.
    discriminating power), and at least one inverted or adversarial framing. Tell
    the user the frame in ~6 lines, then keep going — it is not a checkpoint.
 
+   If the inspiration is about a period ("since the market fell out in 2023"), pass
+   `era={"after": "2023-10-01"}`. It is recorded with the frame, used as the sweep
+   capture's window, and the report flags evidence and quotes from outside it.
+   Without it the sweep covers the year before the run.
+
 2. **Probe `dialog` once, before any capture.** One `ToolSearch` covering **both**
    spellings — `mcp__plugin_problem-prospector_dialog__*` (installed as a plugin, the
    normal case) and `mcp__dialog__*` (configured at user or project scope). Expect it
@@ -79,7 +84,9 @@ you cite, not from a view you form.
    "searched and found nothing", which is a false claim about the world.
 
 3. **Capture, in waves of 4-6.** Per cell: Reddit (dialog via `pain_ingest_records`
-   if available, else `pain_capture_reddit` once per query), then
+   if available; else, once per query, `pain_capture_reddit_sweep` when the cell names
+   a busy subreddit — more than ~20 posts a day, which is most general-interest ones —
+   and `pain_capture_reddit` when every subreddit is small), then
    `pain_capture_trends` only for sources the §3.1 relevance table admits, then
    `pain_capture_saturation` once. Record every deliberate skip with
    `pain_record_source_decision`. Pass `concurrent_captures` = the wave size, since
@@ -87,6 +94,15 @@ you cite, not from a view you form.
 
    Mixing dialog and Arctic Shift across cells is safe: `pain_merge_staging`
    collapses any post both captured, so a pain is not weighted twice.
+
+   **The sweep, in practice.** Its first call for a big subreddit downloads that
+   subreddit's whole window into a cache and can take many minutes; every later query
+   and cell naming the same subreddit reuses the cache and takes seconds. A call that
+   runs out of its 15-minute budget returns `resume: true` and stages nothing — call it
+   again with the same arguments until it stages. Run at most two sweeps at once
+   (`concurrent_captures=2`); three parallel streams from one machine drew throttling.
+   If `pain_capture_reddit` returns "1/2 subreddits served" with a 422 timeout on a
+   busy subreddit, that cell wants the sweep instead.
 
    Degradation is **silent to the user and loud in the run**. Do not report that
    `dialog` needs OAuth, do not offer to authenticate anything: the health file is
@@ -98,7 +114,12 @@ you cite, not from a view you form.
    anyway.
 
 5. **Cluster.** `pain_cluster`. If the cut looks wrong, re-cluster at a different
-   `percentile`; never hand-merge or hand-split.
+   `percentile`; never hand-merge or hand-split. Read `fusion_advisory` and
+   `largest_cluster_share` in the result: at several thousand items the default cut
+   tends to merge adjacent pains into one dominant cluster, and the advisory names the
+   lower percentile that would split it (from `percentile_probe`, computed on the same
+   evidence). Re-clustering is cheap — embeddings are cached in the run — but it needs
+   `reseed=true` and discards any intensity already scored, so decide before scoring.
 
 6. **Gate, then score, per cluster.** `pain_inventory_gate` on every cluster, then
    `pain_score_intensity` on each one that passed. Pull candidate quotes from the

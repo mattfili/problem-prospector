@@ -264,6 +264,17 @@ pacing; `reddit_search.py` now walks a limit ladder (100 → 50 → 25 → 10) w
 doubling backoff before giving up, and `403`/`429` are still circuit-broken on sight
 and never retried. dialog sidesteps that path entirely.
 
+**For busy subreddits there is now a key-free path that does not use the query
+endpoint at all.** `pain_capture_reddit_sweep` (`scripts/reddit_sweep.py`) lists each
+subreddit's posts by time window — the archive endpoint that stays reliable when
+search does not — caches them in the run, and matches the query locally, keeping at
+most 100 posts per subreddit spread evenly across the window. On the two field runs
+that motivated it, the query path finished 4 of 44 captures in 25 minutes; a sweep of
+the same subreddits took about 25 minutes for r/whiskey's three years and then served
+every query from cache. It pauses 60–90 s and retries on a `429`/`403` (an exception
+to the never-retry rule, chosen because a sweep is thousands of requests long), and
+keeps every page on disk so an interrupted sweep resumes.
+
 Because an MCP server cannot call another MCP server's tools, the dialog path runs
 client-side and hands its results to `pain_ingest_records`, which enforces the
 evidence contract on them. `pain_merge_staging` then collapses any post both dialog

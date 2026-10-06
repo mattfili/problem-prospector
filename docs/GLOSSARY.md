@@ -113,10 +113,25 @@ post-pairs count as "the same complaint". `--percentile 12` is tighter than
 everything shatters into singletons.
 
 ### fusion advisory
-A warning that one cluster's posts are about as unrelated to each other as two
-random posts from the whole run — usually a sign two different problems got
-merged. Re-run with a lower [percentile cut](#percentile-cut) to split harder;
-if it still looks wrong, the frame is too broad.
+A warning that one cluster probably holds several different problems merged
+together. It fires when one cluster holds more than 15% of all posts in a run
+of 1,000+ posts (35% in a smaller run), or when a cluster's posts are about as
+unrelated to each other as two random posts from the whole run. On big runs it
+names the lower [percentile cut](#percentile-cut) that would bring the largest
+cluster under 15%, worked out on the same posts. Re-cluster at that percentile
+to split harder; if even the lowest one leaves a dominant cluster, read a sample
+of it — it may be one genuinely dominant pain, or the frame is too broad.
+
+### era
+The period a frame is about, such as "since 2023", set once when the run is
+created. The sweep capture searches only inside it; the report says how much
+evidence falls outside it and marks quotes from outside it, so an old post is
+never read as a current complaint.
+
+### sweep
+The capture for busy subreddits: download every post in the era once, then look
+for each query in those posts locally, instead of asking the archive to search
+(which times out on busy subreddits and only returns the newest 100 posts).
 
 ### unclustered tail
 Posts that matched nothing else closely enough to group. One post is a rumour;

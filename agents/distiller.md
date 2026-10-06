@@ -107,7 +107,7 @@ jq '{backend, cut_basis, algorithm, evidence_count, gate,
 
 | Observation | What it usually means | What you do |
 |---|---|---|
-| `gate.largest_cluster_share > 0.35` (the script logs an advisory) | the adaptive p35 cut fused several adjacent pains — evidence captured against one inspiration sits in a narrow distance band | re-run once with `--percentile 25` (range 10–25). If the share persists, keep it and report the fusion; do not hand-split |
+| `fusion_advisory` is non-null (fires when `gate.largest_cluster_share` > 0.15 on 1,000+ items, > 0.35 below) | the adaptive cut fused several adjacent pains — evidence captured against one inspiration sits in a narrow distance band, and at several thousand items average linkage chains harder | re-run once at the percentile the advisory names (from `percentile_probe`; otherwise `--percentile 25`, range 5–25). If the share persists, keep it and report the fusion; do not hand-split |
 | `clusters` empty, or every cluster is `member_count: 2` with `distinct_authors: 2` | evidence too sparse or too heterogeneous | **do not write cards.** Report it — garbage clustered confidently is worse than nothing |
 | `unclustered_ids` > ~half of `evidence_count` | matrix framings were too heterogeneous (each cell found its own unrelated world), or capture was thin | proceed, and report the share — it is diagnostic for the render header, not garbage |
 | `gate.passed: false` (`cluster_count < min_clusters`, default 6) | **advisory only** for evidence | proceed. If the world only complains about three things, three clusters is the finding. Only the §5 wedge divergence gate is pass/fail |

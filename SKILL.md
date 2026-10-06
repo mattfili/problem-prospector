@@ -78,13 +78,14 @@ evidence on disk and returned with its derivation.
 | Tool | Owns |
 |---|---|
 | `pain_run_create` / `pain_run_status` | `inputs.json` behind the Stage-1 shape gate; the read-only gate walk that names the next tool |
-| `pain_capture_reddit` | Reddit posts **and** comments, per cell per query. No score floor, no date window, no free limit |
+| `pain_capture_reddit` | Reddit posts **and** comments, per cell per query, via the archive's search — for small subreddits. No score floor, no date window, no free limit |
+| `pain_capture_reddit_sweep` | The same, for busy subreddits (more than ~20 posts a day), where the archive's search times out: sweeps each subreddit's whole window once into a run cache, matches the query locally, keeps ≤100 posts per subreddit spread evenly across the window, plus top comments. Window = the frame's `era`, or the year before the run. Resumable across calls |
 | `pain_capture_trends` | `hackernews` / `stackoverflow` / `producthunt` only — the intersection of the §2 enum with keyword-searchable sources |
 | `pain_ingest_records` | Reddit evidence the *client* captured from the `dialog` MCP — computed ids, real-permalink and engagement-or-null checks, all-or-nothing batches. Exists because an MCP server cannot call another server's tools. |
 | `pain_capture_saturation` | The first saturation read, to a sidecar, never to evidence |
 | `pain_record_source_decision` | A deliberate `skipped` / `degraded` decision, on the record |
 | `pain_merge_staging` / `pain_capture_gate` | The dedup-on-`id` merge with dropped-line accounting, plus the cross-source collapse that id dedup cannot see (one post via both Arctic Shift and dialog hashes to two ids); the thin-capture stop |
-| `pain_cluster` | `cluster.py` plus the computed frequency panel and the thresholds actually used |
+| `pain_cluster` | `cluster.py` plus the computed frequency panel and the thresholds actually used; reports the largest cluster's share and a fusion advisory naming the percentile that would split a dominant cluster. Embeddings are cached per run, so re-clustering is seconds |
 | `pain_inventory_gate` | The `pass`/`exclude` verdict and the load-bearing `excluded:` flag prefix |
 | `pain_score_intensity` | Verbatim validation against the cluster's own evidence, distinct-author counts resolved off disk, the 1-5 ladder, the caps, `read`, `quadrant` |
 | `pain_report` | `pain-clusters.md` — sort key, thresholds, source health, the two axes, no composite |
@@ -109,8 +110,9 @@ script reads an API key; see `docs/CONTRACTS.md` cross-cutting rule 4.
 
 | Script | Guaranteed path for |
 |---|---|
-| `scripts/cluster.py` | Local embedding + clustering (`clusters.json`) — no MCP equivalent, this is the only path. |
+| `scripts/cluster.py` | Local embedding + clustering (`clusters.json`) — no MCP equivalent, this is the only path. Handles up to ~15,000 items via `scripts/cluster_scale.py` (numpy); refuses larger pools up front with a memory estimate. |
 | `scripts/reddit_search.py` | Reddit capture, fallback for the `dialog` MCP. |
+| `scripts/reddit_sweep.py` | Reddit capture for busy subreddits: time-window sweep, cached and resumable, with local query matching. |
 | `scripts/trends_cli.py` | Multi-source trend/evidence capture (HN, Stack Overflow, Product Hunt, etc.), fallback for `trend-pulse`. |
 | `scripts/reality_cli.py` | Saturation/competitor-count read, fallback for `idea-reality`. |
 | `scripts/crawl.py` | Competitor page crawling for `/diligence` — no MCP equivalent. |

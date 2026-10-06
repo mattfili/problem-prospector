@@ -36,13 +36,23 @@ Written **before any capture** so a run is auditable and re-runnable (§3.0).
       "queries": ["311 dispatch software complaints", "..."],
       "subreddits": ["sysadmin", "publicwork"]
     }
-  ]
+  ],
+  "era": {"after": "2023-10-01", "before": null}
 }
 ```
 
 `matrix` holds 6–12 cells: {personas} × {verticals} × {problem framings}.
 `--niche` free text **constrains or extends** the vertical axis; it never
 replaces generation.
+
+`era` is optional (`null` or absent when the frame is not about a period). It
+is set once, with the frame, by `pain_run_create`, and changing it on an
+existing run is refused like changing the matrix. It is **not a capture
+lever**: no capture tool accepts a window of its own. The busy-subreddit sweep
+(`reddit_sweep.py`) uses it as its window — or, with no era, the 365 days
+before `created_utc`. The query capture does not filter by it, but every
+capture records how many of its items fall outside it (`date_span` below) and
+the report prints the share of evidence outside it and marks out-of-era quotes.
 
 ---
 
@@ -51,8 +61,8 @@ replaces generation.
 One JSON object per line. Scouts **capture only, never interpret** (§3.1).
 Append-only. Never edited by later stages.
 
-**Produced by** scout agents, `reddit_search.py`, `trends_cli.py`,
-`reality_cli.py` · **Consumed by** `cluster.py`
+**Produced by** scout agents, `reddit_search.py`, `reddit_sweep.py`,
+`trends_cli.py`, `reality_cli.py` · **Consumed by** `cluster.py`
 
 Note: the `*_history.py` scripts do **not** produce evidence — they return bucket
 counts, not items, and feed §4 `retro_trend` instead. HN/Stack Overflow/Product
@@ -112,12 +122,29 @@ historian, wedgesmith
       "member_ids": ["sha1...", "sha1..."]
     }
   ],
-  "unclustered_ids": ["sha1..."]
+  "unclustered_ids": ["sha1..."],
+  "gate": {"largest_cluster_share": 0.12, "...": "..."},
+  "largest_cluster_sizes": [842, 410, 305, 288, 201],
+  "fusion_advisory": null,
+  "percentile_probe": [
+    {"percentile": 25.0, "cut": 0.31, "clusters": 400, "largest_share": 0.46},
+    {"percentile": 5.0, "cut": 0.22, "clusters": 1050, "largest_share": 0.12}
+  ]
 }
 ```
 
 `distinct_authors` guards against one person ranting 40 times.
 `distinct_communities` guards against a single-subreddit echo.
+
+`largest_cluster_sizes` (the five biggest `member_count`s), `fusion_advisory`
+and `percentile_probe` describe the *shape* of the result. Average linkage at
+6–9k items chains adjacent pains into one dominant cluster (46% of 6,776 items
+at p25 on one real run), so `fusion_advisory` is a sentence — or `null` — saying
+one cluster holds more than 15% of a pool of 1,000+ items (35% below that) and
+which lower percentile would split it. `percentile_probe` is what each of
+p25/p15/p10/p5 would produce on the same evidence (the linkage tree is built
+once and re-cut, so this is nearly free); it is `null` when HDBSCAN ran or numpy
+was unavailable. Both are advisory: re-clustering is the reader's decision.
 
 ---
 
@@ -301,13 +328,19 @@ a shell or in `jq` (note that `pathlib.Path.glob` *does* match dotfiles — see
 |---|---|
 | `cards/.calibration.json` | The frequency thresholds actually used, the scale factor, and the run's engagement top decile. Read by the report header; not a contract path. |
 | `evidence/.staging/saturation-<cell_id>.json` | The capture-time saturation read, awaiting Stage 5's join. Already declared by §3.1; a pain-search run simply leaves it staged. |
+| `evidence/.sweep/<subreddit>.jsonl` (+ `.meta.json`, `.lock`) | The busy-subreddit sweep's cache: every post in the window, slimmed, one per line, with the window, the volume probe and any sample declaration in the meta file. **Not evidence** — nothing reads it but `reddit_sweep.py`, and `cluster.py` only reads `evidence/*.jsonl` and staged evidence. Resumable; safe to delete (the next sweep call re-fetches). |
+| `.cache/embeddings-<model>.npz` | `cluster.py`'s per-text embedding cache (`model`, `keys` = sha1 of each embed text, `vectors`). Lets a re-cluster at a new percentile skip embedding, and lets a run killed mid-embedding resume. One file per model so vectors from different embedding spaces never mix. Safe to delete. |
 
 The report header is not decoration. It carries the active sort key verbatim, the
+clustering shape (largest cluster's share, the five biggest sizes, and the fusion
+advisory when one fired), the era and the share of evidence dated outside it, the
 counts, the frequency thresholds actually used, one line of source health, and any
 rubric interpretation that changed a number this run (§3.3 contradicts itself in two
 places; `scripts/pain_rubric.py` resolves both and the report discloses when the
 resolution bound). An unstated threshold makes every `read` non-reproducible, and an
 encoded judgment nobody can see is the failure this whole document exists to prevent.
+Each quoted exemplar carries its month (`YYYY-MM`) and community, and is marked
+**outside the era** when it is.
 
 ---
 
@@ -448,6 +481,14 @@ clusters, and slope changes. Requires §1 and §3 from the prior run.
    `{"source": "dialog", "status": "unavailable", "fallback": "reddit_search.py", "detail": "401"}`.
    A source that failed is **never** reported as "no discussion found".
 
+   Optional keys a line may carry, all additive:
+
+   | Key | On | Holds |
+   |---|---|---|
+   | `date_span` | Reddit capture lines (`reddit:arctic-shift`, status `ok`/`degraded`) | `{"earliest_utc", "latest_utc"}` of the items this capture wrote, plus `n_before_era` / `n_after_era` when the frame sets an era |
+   | `mode` | sweep capture lines | `"sweep"` — the query was matched locally against a time-window sweep, not run by the archive |
+   | `embedding_cache` | `clusters.json` `embedding:*` lines | `hit`, `miss`, `partial: R of N reused`, or `off: <reason>` |
+
    `source_health.json` is **JSONL at the run root** (one object per line,
    appended with `printf '%s\n' … >>`) and a **JSON array inside
    `rescan-<DATE>/`**. Readers should tolerate both; writers must match the
@@ -574,6 +615,19 @@ Two consequences worth stating so nobody "fixes" this wrongly:
   answers a different question — see "The dropped-query rule" below, and
   `agents/scout.md`, which permits a no-query pull only for a subreddit whose entire
   topic *is* the cell's vertical.
+- **The sweep is not that substitution.** `reddit_sweep.py`
+  (`pain_capture_reddit_sweep`) pulls the no-query listing for the whole window
+  and then **applies the query itself**, so it answers the question asked. Its
+  matching differs from the archive's in one way worth knowing: it is whole-word
+  and phrase-exact (`permit` does not match `permitted`; `french drain` needs both
+  words in order), where the archive stem-matches. The cap is 100 posts per
+  subreddit per query, spread evenly across the window rather than newest-first.
+  Removed and author-deleted posts (the archive's `_meta.removal_type`) are
+  excluded and counted on the health line. A 429/403 during a sweep is answered
+  with a 60–90 s pause (or the archive's `Retry-After`) and a retry, up to five
+  times — an owner-approved exception to `reddit_search.py`'s never-retry rule,
+  because a sweep is thousands of requests long. Every page is on disk before
+  the next request, so a sweep that still gives up resumes on the next call.
 - **`dialog` is the real path for query-driven Reddit capture** when the archive's
   query endpoint is degraded, which is the strongest practical argument for
   authenticating it. Its results are staged through `pain_ingest_records`.
